@@ -571,6 +571,13 @@ class CAR(Platforms):
     CarSpecs(mass=3558 * CV.LB_TO_KG, wheelbase=2.8, steerRatio=13.75, tireStiffnessFactor=0.5),
     flags=HyundaiFlags.HYBRID | HyundaiFlags.UNSUPPORTED_LONGITUDINAL,
   )
+  KIA_PV5 = HyundaiCanFDPlatformConfig(
+    [
+      HyundaiCarDocs("Kia PV5 2026", "All", car_parts=CarParts.common([CarHarness.hyundai_a])),
+    ],
+    CarSpecs(mass=1920, wheelbase=2.9, steerRatio=16, tireStiffnessFactor=0.65),
+    flags=HyundaiFlags.EV | HyundaiFlags.CCNC,
+  )
   KIA_SELTOS = HyundaiPlatformConfig(
     [HyundaiCarDocs("Kia Seltos 2021", car_parts=CarParts.common([CarHarness.hyundai_a]))],
     CarSpecs(mass=1337, wheelbase=2.63, steerRatio=14.56),
