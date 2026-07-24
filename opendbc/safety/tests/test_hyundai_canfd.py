@@ -173,6 +173,34 @@ class TestHyundaiCanfdLFASteeringAltButtonsBase(TestHyundaiCanfdLFASteeringBase)
       self.assertFalse(self._tx(self._acc_cancel_msg(False)))
 
 
+class TestHyundaiCanfdPleosConnectButtons(unittest.TestCase):
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_canfd_generated")
+    self.safety = libsafety_py.libsafety
+    safety_param = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.CCNC | \
+                   HyundaiSafetyFlags.CANFD_ALT_BUTTONS | HyundaiSafetyFlags.PLEOS_CONNECT_PV5
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, safety_param)
+    self.safety.init_tests()
+
+  def _button_msg(self, **values):
+    return self.packer.make_can_msg_safety("PLEOS_CONNECT_BUTTONS", 0, values)
+
+  def test_lfa_button_enables_mads_lateral(self):
+    self.safety.set_mads_params(True, False, False)
+
+    for pressed, lateral_allowed in ((False, False), (True, True), (False, True)):
+      self.assertTrue(self.safety.safety_rx_hook(self._button_msg(LDA_BTN=pressed)))
+      self.assertEqual(pressed, self.safety.get_mads_button_press())
+      self.assertEqual(lateral_allowed, self.safety.get_controls_allowed_lateral())
+
+  def test_cruise_buttons_message_is_accepted(self):
+    for button in range(4):
+      self.assertTrue(self.safety.safety_rx_hook(self._button_msg(CRUISE_BUTTONS=button)))
+
+    self.assertTrue(self.safety.safety_rx_hook(self._button_msg(PAUSE_RESUME_BTN=1)))
+    self.assertTrue(self.safety.safety_rx_hook(self._button_msg(ADAPTIVE_CRUISE_MAIN_BTN=1)))
+
+
 @parameterized_class(ALL_GAS_EV_HYBRID_COMBOS)
 class TestHyundaiCanfdLFASteeringAltButtons(TestHyundaiCanfdLFASteeringAltButtonsBase):
   pass

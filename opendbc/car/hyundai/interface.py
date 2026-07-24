@@ -87,6 +87,8 @@ class CarInterface(CarInterfaceBase):
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CAMERA_SCC.value
       if ret.flags & HyundaiFlags.CCNC and not ret.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
+      if ret.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.PLEOS_CONNECT_PV5.value
 
     else:
       # Shared configuration for non CAN-FD cars

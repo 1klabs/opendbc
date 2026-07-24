@@ -92,11 +92,36 @@ class TestPleosConnect(unittest.TestCase):
       parser.update((3, [(0x3E3, bytes(data), 0)]))
       assert parser.vl["PLEOS_CONNECT_BLINKERS"][signal] == 1
 
+  def test_buttons(self):
+    parser = CANParser("hyundai_canfd_generated", [], 0)
+    message = "PLEOS_CONNECT_BUTTONS"
+    parser.vl[message]
+
+    for value in range(4):
+      data = bytearray(16)
+      data[80 // 8] = value
+      parser.update((4, [(0x10B, bytes(data), 0)]))
+      assert parser.vl[message]["CRUISE_BUTTONS"] == value
+
+    signals = {
+      "PAUSE_RESUME_BTN": (82, 1),
+      "ADAPTIVE_CRUISE_MAIN_BTN": (83, 1),
+      "LDA_BTN": (87, 1),
+    }
+    for signal, (start_bit, value) in signals.items():
+      data = bytearray(16)
+      data[start_bit // 8] = value << (start_bit % 8)
+      parser.update((4, [(0x10B, bytes(data), 0)]))
+      assert parser.vl[message][signal] == value
+
   def test_counter_steps(self):
     CP = CarInterface.get_params(CAR.KIA_PV5, gen_empty_fingerprint(), [], False, False, False)
     pt_parser = CarState.get_can_parsers_canfd(None, CP)[Bus.pt]
     assert pt_parser.message_states[0x35].counter_step == 2
     assert pt_parser.message_states[0x2E0].counter_step == 2
+    assert pt_parser.message_states[0x10B].frequency == 1
+
+    assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.PLEOS_CONNECT_PV5
 
 
 class TestHyundaiFingerprint(unittest.TestCase):

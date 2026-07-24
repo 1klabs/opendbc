@@ -58,7 +58,8 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     self.accelerator_msg_canfd = "ACCELERATOR" if CP.flags & HyundaiFlags.EV else \
                                  "ACCELERATOR_ALT" if CP.flags & HyundaiFlags.HYBRID else \
                                  "ACCELERATOR_BRAKE_ALT"
-    self.cruise_btns_msg_canfd = "CRUISE_BUTTONS_ALT" if CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS else \
+    self.cruise_btns_msg_canfd = "PLEOS_CONNECT_BUTTONS" if CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5 else \
+                                 "CRUISE_BUTTONS_ALT" if CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS else \
                                  "CRUISE_BUTTONS"
     self.is_metric = False
     self.buttons_counter = 0
@@ -304,10 +305,17 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
     prev_lda_button = self.lda_button
-    self.cruise_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["CRUISE_BUTTONS"])
-    self.main_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["ADAPTIVE_CRUISE_MAIN_BTN"])
-    self.lda_button = cp.vl[self.cruise_btns_msg_canfd]["LDA_BTN"]
-    self.buttons_counter = cp.vl[self.cruise_btns_msg_canfd]["COUNTER"]
+    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+      buttons = cp.vl[self.cruise_btns_msg_canfd]
+      cruise_button = Buttons.CANCEL if buttons["PAUSE_RESUME_BTN"] else buttons["CRUISE_BUTTONS"]
+      self.cruise_buttons.append(cruise_button)
+      self.main_buttons.append(buttons["ADAPTIVE_CRUISE_MAIN_BTN"])
+      self.lda_button = buttons["LDA_BTN"]
+    else:
+      self.cruise_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["CRUISE_BUTTONS"])
+      self.main_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["ADAPTIVE_CRUISE_MAIN_BTN"])
+      self.lda_button = cp.vl[self.cruise_btns_msg_canfd]["LDA_BTN"]
+      self.buttons_counter = cp.vl[self.cruise_btns_msg_canfd]["COUNTER"]
     ret.accFaulted = cp.vl["TCS"]["ACCEnable"] != 0  # 0 ACC CONTROL ENABLED, 1-3 ACC CONTROL DISABLED
 
     if self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
@@ -337,6 +345,9 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
         # this message is 50Hz but the ECU frequently stops transmitting for ~0.5s
         ("CRUISE_BUTTONS", 1)
       ]
+    if CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+      msgs.append(("PLEOS_CONNECT_BUTTONS", 1))
+
     pt_parser = CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, CanBus(CP).ECAN)
     if CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
       pt_parser.set_counter_step("ACCELERATOR", 2)

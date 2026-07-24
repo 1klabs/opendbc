@@ -41,6 +41,10 @@
   HYUNDAI_CANFD_COMMON_RX_CHECKS(pt_bus)                                                                                                         \
   {.msg = {{0x1aa, (pt_bus), 16, 50U, .ignore_checksum = true, .max_counter = 0xffU, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
+#define HYUNDAI_CANFD_PLEOS_CONNECT_RX_CHECKS(pt_bus)                                                                                                              \
+  HYUNDAI_CANFD_COMMON_RX_CHECKS(pt_bus)                                                                                                                           \
+  {.msg = {{0x10b, (pt_bus), 16, 1U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true, .ignore_frequency_check = true}, { 0 }, { 0 }}},  \
+
 // SCC_CONTROL (from ADAS unit or camera)
 #define HYUNDAI_CANFD_SCC_ADDR_CHECK(scc_bus)                                                                            \
   {.msg = {{0x1a0, (scc_bus), 32, 50U, .max_counter = 0xffU, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
@@ -48,6 +52,7 @@
 static bool hyundai_canfd_alt_buttons = false;
 static bool hyundai_canfd_lka_steer_msg_alt = false;
 static bool hyundai_ccnc = false;
+static bool hyundai_pleos_connect = false;
 
 static bool get_hyundai_ccnc(void) {
   return hyundai_ccnc;
@@ -86,11 +91,15 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
     }
 
     // cruise buttons
-    const unsigned int button_addr = hyundai_canfd_alt_buttons ? 0x1aaU : 0x1cfU;
+    const unsigned int button_addr = hyundai_pleos_connect ? 0x10bU : (hyundai_canfd_alt_buttons ? 0x1aaU : 0x1cfU);
     if (msg->addr == button_addr) {
       bool main_button = false;
       int cruise_button = 0;
-      if (msg->addr == 0x1cfU) {
+      if (msg->addr == 0x10bU) {
+        cruise_button = GET_BIT(msg, 82U) ? HYUNDAI_BTN_CANCEL : (msg->data[10] & 0x3U);
+        main_button = GET_BIT(msg, 83U);
+        mads_button_press = GET_BIT(msg, 87U) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
+      } else if (msg->addr == 0x1cfU) {
         cruise_button = msg->data[2] & 0x7U;
         main_button = GET_BIT(msg, 19U);
         mads_button_press = GET_BIT(msg, 23U) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
@@ -233,6 +242,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   const uint16_t HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT = 128;
   const uint16_t HYUNDAI_PARAM_CANFD_ALT_BUTTONS = 32;
   const uint16_t HYUNDAI_PARAM_CCNC = 1024;
+  const uint16_t HYUNDAI_PARAM_PLEOS_CONNECT = 2048;
 
   static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_TX_MSGS[] = {
     HYUNDAI_CANFD_LKA_STEER_MSG_COMMON_TX_MSGS(0, 1)
@@ -292,6 +302,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   hyundai_canfd_alt_buttons = GET_FLAG(param, HYUNDAI_PARAM_CANFD_ALT_BUTTONS);
   hyundai_canfd_lka_steer_msg_alt = GET_FLAG(param, HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT);
   hyundai_ccnc = GET_FLAG(param, HYUNDAI_PARAM_CCNC);
+  hyundai_pleos_connect = GET_FLAG(param, HYUNDAI_PARAM_PLEOS_CONNECT);
 
   safety_config ret;
   if (hyundai_longitudinal) {
@@ -312,6 +323,10 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(0)
       };
 
+      static RxCheck hyundai_canfd_pleos_connect_long_rx_checks[] = {
+        HYUNDAI_CANFD_PLEOS_CONNECT_RX_CHECKS(0)
+      };
+
       static CanMsg hyundai_canfd_lfa_steering_camera_scc_tx_msgs[] = {
         HYUNDAI_CANFD_LFA_STEERING_CAMERA_SCC_TX_MSGS(true)
       };
@@ -320,7 +335,9 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         HYUNDAI_CANFD_LFA_STEERING_CAMERA_SCC_CCNC_TX_MSGS(true)
       };
 
-      if (hyundai_canfd_alt_buttons) {
+      if (hyundai_pleos_connect) {
+        SET_RX_CHECKS(hyundai_canfd_pleos_connect_long_rx_checks, ret);
+      } else if (hyundai_canfd_alt_buttons) {
         SET_RX_CHECKS(hyundai_canfd_alt_buttons_long_rx_checks, ret);
       } else {
         SET_RX_CHECKS(hyundai_canfd_long_rx_checks, ret);
@@ -366,9 +383,16 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         HYUNDAI_CANFD_SCC_ADDR_CHECK(0)
       };
 
+      static RxCheck hyundai_canfd_pleos_connect_radar_scc_rx_checks[] = {
+        HYUNDAI_CANFD_PLEOS_CONNECT_RX_CHECKS(0)
+        HYUNDAI_CANFD_SCC_ADDR_CHECK(0)
+      };
+
       SET_TX_MSGS(HYUNDAI_CANFD_LFA_STEERING_TX_MSGS, ret);
 
-      if (hyundai_canfd_alt_buttons) {
+      if (hyundai_pleos_connect) {
+        SET_RX_CHECKS(hyundai_canfd_pleos_connect_radar_scc_rx_checks, ret);
+      } else if (hyundai_canfd_alt_buttons) {
         SET_RX_CHECKS(hyundai_canfd_alt_buttons_radar_scc_rx_checks, ret);
       } else {
         SET_RX_CHECKS(hyundai_canfd_radar_scc_rx_checks, ret);
@@ -388,6 +412,11 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         HYUNDAI_CANFD_SCC_ADDR_CHECK(2)
       };
 
+      static RxCheck hyundai_canfd_pleos_connect_rx_checks[] = {
+        HYUNDAI_CANFD_PLEOS_CONNECT_RX_CHECKS(0)
+        HYUNDAI_CANFD_SCC_ADDR_CHECK(2)
+      };
+
       static CanMsg hyundai_canfd_lfa_steering_camera_scc_tx_msgs[] = {
         HYUNDAI_CANFD_LFA_STEERING_CAMERA_SCC_TX_MSGS(false)
       };
@@ -402,7 +431,9 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         SET_TX_MSGS(hyundai_canfd_lfa_steering_camera_scc_tx_msgs, ret);
       }
 
-      if (hyundai_canfd_alt_buttons) {
+      if (hyundai_pleos_connect) {
+        SET_RX_CHECKS(hyundai_canfd_pleos_connect_rx_checks, ret);
+      } else if (hyundai_canfd_alt_buttons) {
         SET_RX_CHECKS(hyundai_canfd_alt_buttons_rx_checks, ret);
       } else {
         SET_RX_CHECKS(hyundai_canfd_rx_checks, ret);
