@@ -64,16 +64,15 @@ class TestPleosConnect(unittest.TestCase):
     parser.vl["PLEOS_CONNECT_BLINKERS"]
 
     door_signals = {
-      "DRIVER_DOOR": 8,
-      "PASSENGER_DOOR": 30,
-      "LEFT_DOOR": 32,
-      "RIGHT_DOOR": 34,
-      "TRUNK": 36,
+      "DRIVER_DOOR": 64,
+      "PASSENGER_DOOR": 66,
+      "CARGO_LEFT_DOOR": 68,
+      "CARGO_RIGHT_DOOR": 70,
     }
     for signal, start_bit in door_signals.items():
-      data = bytearray(8)
+      data = bytearray(16)
       data[start_bit // 8] = 1 << (start_bit % 8)
-      parser.update((1, [(0x00, bytes(data), 0)]))
+      parser.update((1, [(0x3E2, bytes(data), 0)]))
       assert parser.vl["PLEOS_CONNECT_DOORS"][signal] == 1
 
     data = bytearray(8)

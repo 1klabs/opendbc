@@ -236,7 +236,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
 
     if self.CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
       ret.doorOpen = any(cp.vl["PLEOS_CONNECT_DOORS"][signal] == 1 for signal in (
-        "DRIVER_DOOR", "PASSENGER_DOOR", "LEFT_DOOR", "RIGHT_DOOR", "TRUNK",
+        "DRIVER_DOOR", "PASSENGER_DOOR", "CARGO_LEFT_DOOR", "CARGO_RIGHT_DOOR",
       ))
       ret.seatbeltUnlatched = cp.vl["PLEOS_CONNECT_SEATBELTS"]["DRIVER_SEATBELT"] == 0
     else:
