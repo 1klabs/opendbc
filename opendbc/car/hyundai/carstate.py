@@ -234,8 +234,14 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
 
     ret.brakePressed = cp.vl["TCS"]["DriverBraking"] == 1
 
-    ret.doorOpen = cp.vl["DOORS_SEATBELTS"]["DRIVER_DOOR"] == 1
-    ret.seatbeltUnlatched = cp.vl["DOORS_SEATBELTS"]["DRIVER_SEATBELT"] == 0
+    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+      ret.doorOpen = any(cp.vl["PLEOS_CONNECT_DOORS"][signal] == 1 for signal in (
+        "DRIVER_DOOR", "PASSENGER_DOOR", "LEFT_DOOR", "RIGHT_DOOR", "TRUNK",
+      ))
+      ret.seatbeltUnlatched = cp.vl["PLEOS_CONNECT_SEATBELTS"]["DRIVER_SEATBELT"] == 0
+    else:
+      ret.doorOpen = cp.vl["DOORS_SEATBELTS"]["DRIVER_DOOR"] == 1
+      ret.seatbeltUnlatched = cp.vl["DOORS_SEATBELTS"]["DRIVER_SEATBELT"] == 0
 
     gear = cp.vl[self.gear_msg_canfd]["GEAR"]
     ret.gearShifter = self.parse_gear_shifter(self.shifter_values.get(gear))
@@ -263,8 +269,13 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
       if not self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
         self.msg_161, self.msg_162, self.msg_1b5 = map(copy.copy, (cp_cam.vl["CCNC_0x161"], cp_cam.vl["CCNC_0x162"], cp_cam.vl["FR_CMR_03_50ms"]))
         self.cruise_info = copy.copy((cp_cam if self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else cp).vl["SCC_CONTROL"])
-    ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_lamp(50, cp.vl["BLINKERS"][f"LEFT_LAMP{alt}"],
-                                                                      cp.vl["BLINKERS"][f"RIGHT_LAMP{alt}"])
+    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+      left_lamp = cp.vl["PLEOS_CONNECT_BLINKERS"]["LEFT_LAMP"]
+      right_lamp = cp.vl["PLEOS_CONNECT_BLINKERS"]["RIGHT_LAMP"]
+    else:
+      left_lamp = cp.vl["BLINKERS"][f"LEFT_LAMP{alt}"]
+      right_lamp = cp.vl["BLINKERS"][f"RIGHT_LAMP{alt}"]
+    ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_lamp(50, left_lamp, right_lamp)
     if self.CP.enableBsm:
       ret.leftBlindspot = bool(cp.vl["ADAS_CMD_50_50ms"]["BCW_LtIndSta"])
       ret.rightBlindspot = bool(cp.vl["ADAS_CMD_50_50ms"]["BCW_RtIndSta"])
@@ -326,8 +337,13 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
         # this message is 50Hz but the ECU frequently stops transmitting for ~0.5s
         ("CRUISE_BUTTONS", 1)
       ]
+    pt_parser = CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, CanBus(CP).ECAN)
+    if CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+      pt_parser.set_counter_step("ACCELERATOR", 2)
+      pt_parser.set_counter_step("MANUAL_SPEED_LIMIT_ASSIST", 2)
+
     return {
-      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, CanBus(CP).ECAN),
+      Bus.pt: pt_parser,
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus(CP).CAM),
     }
 

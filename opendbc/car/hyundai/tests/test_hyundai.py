@@ -2,9 +2,11 @@ from hypothesis import settings, given, strategies as st
 
 import unittest
 
-from opendbc.car import gen_empty_fingerprint
+from opendbc.can import CANParser
+from opendbc.car import Bus, gen_empty_fingerprint
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
+from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.radar_interface import RADAR_START_ADDR
@@ -46,6 +48,56 @@ NO_DATES_PLATFORMS = {
 }
 
 CANFD_EXPECTED_ECUS = {Ecu.fwdCamera, Ecu.fwdRadar}
+
+
+class TestPleosConnect(unittest.TestCase):
+  def test_pv5_flag(self):
+    fingerprint = gen_empty_fingerprint()
+    for car_model in CAR:
+      CP = CarInterface.get_params(car_model, fingerprint, [], False, False, False)
+      assert bool(CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5) == (car_model == CAR.KIA_PV5)
+
+  def test_body_signals(self):
+    parser = CANParser("hyundai_canfd_generated", [], 0)
+    parser.vl["PLEOS_CONNECT_DOORS"]
+    parser.vl["PLEOS_CONNECT_SEATBELTS"]
+    parser.vl["PLEOS_CONNECT_BLINKERS"]
+
+    door_signals = {
+      "DRIVER_DOOR": 8,
+      "PASSENGER_DOOR": 30,
+      "LEFT_DOOR": 32,
+      "RIGHT_DOOR": 34,
+      "TRUNK": 36,
+    }
+    for signal, start_bit in door_signals.items():
+      data = bytearray(8)
+      data[start_bit // 8] = 1 << (start_bit % 8)
+      parser.update((1, [(0x00, bytes(data), 0)]))
+      assert parser.vl["PLEOS_CONNECT_DOORS"][signal] == 1
+
+    data = bytearray(8)
+    data[38 // 8] = 1 << (38 % 8)
+    parser.update((2, [(0x20A, bytes(data), 0)]))
+    assert parser.vl["PLEOS_CONNECT_SEATBELTS"]["DRIVER_SEATBELT"] == 1
+
+    blinker_signals = {
+      "LEFT_STALK": 74,
+      "RIGHT_STALK": 76,
+      "LEFT_LAMP": 93,
+      "RIGHT_LAMP": 95,
+    }
+    for signal, start_bit in blinker_signals.items():
+      data = bytearray(16)
+      data[start_bit // 8] = 1 << (start_bit % 8)
+      parser.update((3, [(0x3E3, bytes(data), 0)]))
+      assert parser.vl["PLEOS_CONNECT_BLINKERS"][signal] == 1
+
+  def test_counter_steps(self):
+    CP = CarInterface.get_params(CAR.KIA_PV5, gen_empty_fingerprint(), [], False, False, False)
+    pt_parser = CarState.get_can_parsers_canfd(None, CP)[Bus.pt]
+    assert pt_parser.message_states[0x35].counter_step == 2
+    assert pt_parser.message_states[0x2E0].counter_step == 2
 
 
 class TestHyundaiFingerprint(unittest.TestCase):

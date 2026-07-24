@@ -151,6 +151,7 @@ class HyundaiFlags(IntFlag):
   ALT_LIMITS_2 = 2 ** 26
 
   CCNC = 2 ** 27
+  PLEOS_CONNECT_PV5 = 2 ** 28
 
 
 @dataclass
@@ -576,7 +577,7 @@ class CAR(Platforms):
       HyundaiCarDocs("Kia PV5 2026", "All", car_parts=CarParts.common([CarHarness.hyundai_a])),
     ],
     CarSpecs(mass=1920, wheelbase=2.9, steerRatio=16, tireStiffnessFactor=0.65),
-    flags=HyundaiFlags.EV | HyundaiFlags.CCNC,
+    flags=HyundaiFlags.EV | HyundaiFlags.CCNC | HyundaiFlags.PLEOS_CONNECT_PV5,
   )
   KIA_SELTOS = HyundaiPlatformConfig(
     [HyundaiCarDocs("Kia Seltos 2021", car_parts=CarParts.common([CarHarness.hyundai_a]))],

@@ -102,6 +102,18 @@ class TestCanParserPacker(unittest.TestCase):
     parser.update([0, [msg]])
     assert parser.can_valid
 
+  def test_parser_counter_step(self):
+    packer = CANPacker(TEST_DBC)
+    parser = CANParser(TEST_DBC, [], 0)
+    parser.set_counter_step("CAN_FD_MESSAGE", 2)
+
+    for i in range(1, 1000):
+      counter = (i * 2) % 256
+      msg = packer.make_can_msg("CAN_FD_MESSAGE", 0, {"COUNTER": counter})
+      parser.update([0, [msg]])
+      assert parser.can_valid
+      assert parser.vl["CAN_FD_MESSAGE"]["COUNTER"] == counter
+
   def test_parser_no_partial_update(self):
     """
     Ensure that the CANParser doesn't partially update messages with invalid signals (COUNTER/CHECKSUM).
