@@ -1,8 +1,10 @@
 import unittest
 
-from opendbc.car import gen_empty_fingerprint
+from opendbc.can import CANParser
+from opendbc.car import Bus, gen_empty_fingerprint
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
+from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.radar_interface import RADAR_START_ADDR
@@ -50,6 +52,106 @@ CAN_FEATURE_FLAGS = (HyundaiFlags.CLUSTER_GEARS | HyundaiFlags.TCU_GEARS | Hyund
 
 def cars_with(flags):
   return {c for c in CAR if c.config.flags & flags}
+
+
+class TestPleosConnect(unittest.TestCase):
+  def test_pv5_flag(self):
+    fingerprint = gen_empty_fingerprint()
+    for car_model in CAR:
+      CP = CarInterface.get_params(car_model, fingerprint, [], False, False, False)
+      assert bool(CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5) == (car_model == CAR.KIA_PV5)
+      assert bool(CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING) == (car_model == CAR.KIA_PV5)
+
+    pv5_cp = CarInterface.get_params(CAR.KIA_PV5, fingerprint, [], False, False, False)
+    self.assertAlmostEqual(pv5_cp.wheelbase, 2.995, places=6)
+    self.assertAlmostEqual(pv5_cp.steerRatio, 16.4, places=6)
+    assert pv5_cp.steerControlType == CarParams.SteerControlType.angle
+    assert not pv5_cp.enableBsm
+    assert pv5_cp.flags & HyundaiFlags.SEND_LFA
+    assert pv5_cp.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_ANGLE_STEERING
+
+    pv5_cp_sp = CarInterface.get_params_sp(pv5_cp, CAR.KIA_PV5, fingerprint, [], False, False, False)
+    assert not pv5_cp_sp.intelligentCruiseButtonManagementAvailable
+
+  def test_body_signals(self):
+    parser = CANParser("hyundai_canfd_generated", [], 0)
+    parser.vl["PLEOS_CONNECT_DOORS"]
+    parser.vl["PLEOS_CONNECT_SEATBELTS"]
+    parser.vl["PLEOS_CONNECT_BLINKERS"]
+
+    door_signals = {
+      "DRIVER_DOOR": 64,
+      "PASSENGER_DOOR": 66,
+      "CARGO_LEFT_DOOR": 68,
+      "CARGO_RIGHT_DOOR": 70,
+    }
+    for signal, start_bit in door_signals.items():
+      data = bytearray(16)
+      data[start_bit // 8] = 1 << (start_bit % 8)
+      parser.update((1, [(0x3E2, bytes(data), 0)]))
+      assert parser.vl["PLEOS_CONNECT_DOORS"][signal] == 1
+
+    data = bytearray(8)
+    data[38 // 8] = 1 << (38 % 8)
+    parser.update((2, [(0x20A, bytes(data), 0)]))
+    assert parser.vl["PLEOS_CONNECT_SEATBELTS"]["DRIVER_SEATBELT"] == 1
+
+    blinker_signals = {
+      "LEFT_STALK": 74,
+      "RIGHT_STALK": 76,
+      "LEFT_LAMP": 93,
+      "RIGHT_LAMP": 95,
+    }
+    for signal, start_bit in blinker_signals.items():
+      data = bytearray(16)
+      data[start_bit // 8] = 1 << (start_bit % 8)
+      parser.update((3, [(0x3E3, bytes(data), 0)]))
+      assert parser.vl["PLEOS_CONNECT_BLINKERS"][signal] == 1
+
+  def test_stock_lfa_alt_message(self):
+    parser = CANParser("hyundai_canfd_generated", [], 2)
+    parser.vl["LFA_ALT"]
+    # Stock PV5 camera frame captured while angle control was inactive.
+    data = bytes.fromhex("0d2067100f00000000000000000000000000000000000000")
+    parser.update((0, [(0xCB, data, 2)]))
+
+    values = parser.vl["LFA_ALT"]
+    assert values["COUNTER"] == 0x67
+    assert values["ADAS_ActvACISta"] == 0
+    assert values["ADAS_ActvACILvl2Sta"] == 1
+    assert values["ADAS_StrAnglReqVal"] == 1.5
+    assert values["ADAS_ACIAnglTqRedcGainVal"] == 0
+
+  def test_buttons(self):
+    parser = CANParser("hyundai_canfd_generated", [], 0)
+    message = "PLEOS_CONNECT_BUTTONS"
+    parser.vl[message]
+
+    for value in range(4):
+      data = bytearray(16)
+      data[80 // 8] = value
+      parser.update((4, [(0x10B, bytes(data), 0)]))
+      assert parser.vl[message]["CRUISE_BUTTONS"] == value
+
+    signals = {
+      "PAUSE_RESUME_BTN": (82, 1),
+      "ADAPTIVE_CRUISE_MAIN_BTN": (83, 1),
+      "LDA_BTN": (87, 1),
+    }
+    for signal, (start_bit, value) in signals.items():
+      data = bytearray(16)
+      data[start_bit // 8] = value << (start_bit % 8)
+      parser.update((4, [(0x10B, bytes(data), 0)]))
+      assert parser.vl[message][signal] == value
+
+  def test_counter_steps(self):
+    CP = CarInterface.get_params(CAR.KIA_PV5, gen_empty_fingerprint(), [], False, False, False)
+    pt_parser = CarState.get_can_parsers_canfd(None, CP)[Bus.pt]
+    assert pt_parser.message_states[0x35].counter_step == 2
+    assert pt_parser.message_states[0x2E0].counter_step == 2
+    assert pt_parser.message_states[0x10B].frequency == 1
+
+    assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.PLEOS_CONNECT_PV5
 
 
 class TestHyundaiFingerprint(unittest.TestCase):
@@ -101,11 +203,14 @@ class TestHyundaiFingerprint(unittest.TestCase):
     for car_model in CAR:
       if not (car_model.config.flags & HyundaiFlags.CANFD):
         continue
+      # PV5 firmware was captured from the EPS and ABS in addition to the
+      # standard CAN-FD camera and radar ECUs.
+      expected_ecus = CANFD_EXPECTED_ECUS | ({Ecu.abs, Ecu.eps} if car_model == CAR.KIA_PV5 else set())
       ecus = {fw[0] for fw in FW_VERSIONS[car_model].keys()}
-      ecus_not_in_whitelist = ecus - CANFD_EXPECTED_ECUS
+      ecus_not_in_whitelist = ecus - expected_ecus
       ecu_strings = ", ".join([f"Ecu.{ecu}" for ecu in ecus_not_in_whitelist])
       assert len(ecus_not_in_whitelist) == 0, \
-                       f"{car_model}: Car model has unexpected ECUs: {ecu_strings}"
+                     f"{car_model}: Car model has unexpected ECUs: {ecu_strings}"
 
   def test_blacklisted_parts(self):
     # Asserts no ECUs known to be shared across platforms exist in the database.

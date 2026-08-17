@@ -1,8 +1,9 @@
 import re
 from dataclasses import dataclass, field
-from enum import IntFlag
+from enum import Enum, IntFlag
 
 from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
+from opendbc.car.lateral import AngleSteeringLimitsVM
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.structs import CarParams
 from opendbc.car.docs_definitions import CarHarness, CarDocs, CarParts, SupportType
@@ -16,6 +17,12 @@ Ecu = CarParams.Ecu
 class CarControllerParams:
   ACCEL_MIN = -3.5 # m/s^2
   ACCEL_MAX = 2.0 # m/s^2
+  ANGLE_LIMITS = AngleSteeringLimitsVM(
+    # HKG angle steering uses the vehicle model for the operating limit.
+    # The absolute command bound matches the shared HKG angle port.
+    STEER_ANGLE_MAX=360,
+    MAX_ANGLE_RATE=5,
+  )
 
   def __init__(self, CP):
     self.STEER_DELTA_UP = 3
@@ -33,6 +40,9 @@ class CarControllerParams:
       self.STEER_THRESHOLD = 250
       self.STEER_DELTA_UP = 2
       self.STEER_DELTA_DOWN = 3
+
+    if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
+      self.STEER_THRESHOLD = 175
 
     # To determine the limit for your car, find the maximum value that the stock LKAS will request.
     # If the max stock LKAS request is <384, add your car to this list.
@@ -68,6 +78,9 @@ class HyundaiSafetyFlags(IntFlag):
   CANFD_LKA_STEER_MSG_ALT = 128
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
+  CANFD_ANGLE_STEERING = 1024
+  CCNC = 2048
+  PLEOS_CONNECT_PV5 = 4096
 
 
 # Hyundai/Kia/Genesis SCC (Smart Cruise Control) and steering architecture:
@@ -148,6 +161,10 @@ class HyundaiFlags(IntFlag):
   FCEV = 2 ** 25
 
   ALT_LIMITS_2 = 2 ** 26
+
+  CANFD_ANGLE_STEERING = 2 ** 27
+  CCNC = 2 ** 28
+  PLEOS_CONNECT_PV5 = 2 ** 29
 
 
 @dataclass
@@ -506,6 +523,15 @@ class CAR(Platforms):
     [HyundaiCarDocs("Kia Optima Hybrid 2019", car_parts=CarParts.common([CarHarness.hyundai_h]))],
     CarSpecs(mass=3558 * CV.LB_TO_KG, wheelbase=2.8, steerRatio=13.75, tireStiffnessFactor=0.5),
     flags=HyundaiFlags.HYBRID,
+  )
+  KIA_PV5 = HyundaiCanFDPlatformConfig(
+    [
+      HyundaiCarDocs("Kia PV5 2026", "All", car_parts=CarParts.common([CarHarness.hyundai_a])),
+    ],
+    # Kia service data: 2995 mm wheelbase and 16.4:1 steering ratio at +/-20 degrees.
+    CarSpecs(mass=1920, wheelbase=2.995, steerRatio=16.4, tireStiffnessFactor=0.65),
+    flags=HyundaiFlags.EV | HyundaiFlags.CCNC | HyundaiFlags.PLEOS_CONNECT_PV5 |
+          HyundaiFlags.CANFD_ANGLE_STEERING | HyundaiFlags.SEND_LFA,
   )
   KIA_SELTOS = HyundaiPlatformConfig(
     [HyundaiCarDocs("Kia Seltos 2021", car_parts=CarParts.common([CarHarness.hyundai_a]))],
@@ -888,3 +914,14 @@ UNSUPPORTED_LONGITUDINAL_CAR = {
 NON_SCC_CAR = CAR.with_sp_flags(HyundaiFlagsSP.NON_SCC)
 
 DBC = CAR.create_dbc_map()
+
+
+class ActvACISta(Enum):
+  INIT = 0
+  INACTIVE = 1
+  ACTIVE35_ACTIVE = 2
+
+
+class ESAActvSta(Enum):
+  INACTIVE = 0
+  ACTIVE = 1

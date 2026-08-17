@@ -21,6 +21,13 @@ ALL_GAS_EV_HYBRID_COMBOS = [
   {"GAS_MSG": ("ACCELERATOR_ALT", "ACCELERATOR_PEDAL"), "SCC_BUS": 2, "SAFETY_PARAM": HyundaiSafetyFlags.HYBRID_GAS | HyundaiSafetyFlags.CAMERA_SCC},
 ]
 
+ALL_GAS_EV_HYBRID_COMBOS_CCNC = [
+  # Camera SCC
+  {"GAS_MSG": ("ACCELERATOR_BRAKE_ALT", "ACCELERATOR_PEDAL_PRESSED"), "SCC_BUS": 2, "SAFETY_PARAM": HyundaiSafetyFlags.CAMERA_SCC},
+  {"GAS_MSG": ("ACCELERATOR", "ACCELERATOR_PEDAL"), "SCC_BUS": 2, "SAFETY_PARAM": HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC},
+  {"GAS_MSG": ("ACCELERATOR_ALT", "ACCELERATOR_PEDAL"), "SCC_BUS": 2, "SAFETY_PARAM": HyundaiSafetyFlags.HYBRID_GAS | HyundaiSafetyFlags.CAMERA_SCC},
+]
+
 
 class TestHyundaiCanfdBase(HyundaiButtonBase, common.CarSafetyTest, common.DriverTorqueSteeringSafetyTest, common.SteerRequestCutSafetyTest):
 
@@ -166,6 +173,119 @@ class TestHyundaiCanfdLFASteeringAltButtonsBase(TestHyundaiCanfdLFASteeringBase)
       self.assertFalse(self._tx(self._acc_cancel_msg(False)))
 
 
+class TestHyundaiCanfdPleosConnectButtons(unittest.TestCase):
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_canfd_generated")
+    self.safety = libsafety_py.libsafety
+    safety_param = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.CCNC | \
+                   HyundaiSafetyFlags.CANFD_ALT_BUTTONS | HyundaiSafetyFlags.PLEOS_CONNECT_PV5
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, safety_param)
+    self.safety.init_tests()
+
+  def _button_msg(self, **values):
+    return self.packer.make_can_msg_safety("PLEOS_CONNECT_BUTTONS", 0, values)
+
+  def _accelerator_msg(self, counter):
+    return self.packer.make_can_msg_safety("ACCELERATOR", 0, {"COUNTER": counter})
+
+  def test_accelerator_counter_increments_by_two(self):
+    for counter in range(2, 22, 2):
+      self.assertTrue(self.safety.safety_rx_hook(self._accelerator_msg(counter)))
+
+    for i, counter in enumerate(range(23, 28)):
+      self.assertEqual(i < 4, self.safety.safety_rx_hook(self._accelerator_msg(counter)))
+
+  def test_lfa_button_enables_mads_lateral(self):
+    self.safety.set_mads_params(True, False, False)
+
+    for pressed, lateral_allowed in ((False, False), (True, True), (False, True)):
+      self.assertTrue(self.safety.safety_rx_hook(self._button_msg(LDA_BTN=pressed)))
+      self.assertEqual(pressed, self.safety.get_mads_button_press())
+      self.assertEqual(lateral_allowed, self.safety.get_controls_allowed_lateral())
+
+  def test_cruise_buttons_message_is_accepted(self):
+    for button in range(4):
+      self.assertTrue(self.safety.safety_rx_hook(self._button_msg(CRUISE_BUTTONS=button)))
+
+    self.assertTrue(self.safety.safety_rx_hook(self._button_msg(PAUSE_RESUME_BTN=1)))
+    self.assertTrue(self.safety.safety_rx_hook(self._button_msg(ADAPTIVE_CRUISE_MAIN_BTN=1)))
+
+
+class TestHyundaiCanfdPv5AngleSteering(unittest.TestCase):
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_canfd_generated")
+    self.safety = libsafety_py.libsafety
+    self.safety_param = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.CCNC | \
+                        HyundaiSafetyFlags.PLEOS_CONNECT_PV5 | HyundaiSafetyFlags.CANFD_ANGLE_STEERING
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, self.safety_param)
+    self.safety.init_tests()
+
+    for _ in range(6):
+      self.safety.safety_rx_hook(self._angle_meas_msg(0))
+      self.safety.safety_rx_hook(self._speed_msg(10))
+
+  def _angle_cmd_msg(self, angle, enabled, gain=0):
+    values = {
+      "ADAS_ActvACISta": 0,
+      "ADAS_ActvACILvl2Sta": 2 if enabled else 1,
+      "ADAS_StrAnglReqVal": angle,
+      "ADAS_ACIAnglTqRedcGainVal": gain,
+      "FCA_ESA_ActvSta": 0,
+      "FCA_ESA_TqBstGainVal": 0,
+    }
+    return self.packer.make_can_msg_safety("LFA_ALT", 0, values)
+
+  def _angle_meas_msg(self, angle):
+    return self.packer.make_can_msg_safety("MDPS", 0, {"MDPS_EstStrAnglVal": angle})
+
+  def _speed_msg(self, speed):
+    values = {f"WHL_Spd{pos}Val": speed * 0.03125 for pos in ["FL", "FR", "RL", "RR"]}
+    return self.packer.make_can_msg_safety("WHEEL_SPEEDS", 0, values)
+
+  def test_angle_command_requires_controls_allowed(self):
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self.safety.safety_tx_hook(self._angle_cmd_msg(0, True)))
+
+    self.safety.set_controls_allowed(True)
+    self.assertTrue(self.safety.safety_tx_hook(self._angle_cmd_msg(0, True)))
+
+  def test_inactive_command_tracks_measured_angle(self):
+    self.assertTrue(self.safety.safety_tx_hook(self._angle_cmd_msg(0, False)))
+    self.assertFalse(self.safety.safety_tx_hook(self._angle_cmd_msg(10, False)))
+
+  def test_torque_reduction_gain(self):
+    self.safety.set_controls_allowed(True)
+    self.assertTrue(self.safety.safety_tx_hook(self._angle_cmd_msg(0, True, gain=1.0)))
+    self.assertFalse(self.safety.safety_tx_hook(self._angle_cmd_msg(0, True, gain=1.004)))
+    self.assertFalse(self.safety.safety_tx_hook(self._angle_cmd_msg(0, False, gain=0.5)))
+
+  def test_angle_command_maximum(self):
+    self.safety.set_controls_allowed(True)
+    self.safety.set_desired_angle_last(3600)
+    self.assertTrue(self.safety.safety_tx_hook(self._angle_cmd_msg(360, True)))
+
+    self.safety.set_desired_angle_last(3610)
+    self.assertFalse(self.safety.safety_tx_hook(self._angle_cmd_msg(361, True)))
+
+  def test_angle_message_blocked_without_angle_flag(self):
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd,
+                                 self.safety_param & ~HyundaiSafetyFlags.CANFD_ANGLE_STEERING)
+    self.safety.init_tests()
+    self.assertFalse(self.safety.safety_tx_hook(self._angle_cmd_msg(0, False)))
+
+  def test_stock_angle_message_is_blocked_from_forwarding(self):
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, 0xCB))
+
+  def test_torque_steering_hud_and_standard_buttons_are_not_whitelisted(self):
+    torque_steering = self.packer.make_can_msg_safety("LFA", 0, {})
+    standard_hud = self.packer.make_can_msg_safety("LFAHDA_CLUSTER", 0, {})
+    standard_buttons = self.packer.make_can_msg_safety("CRUISE_BUTTONS", 2, {})
+
+    self.assertFalse(self.safety.safety_tx_hook(torque_steering))
+    self.assertFalse(self.safety.safety_tx_hook(standard_hud))
+    self.assertFalse(self.safety.safety_tx_hook(standard_buttons))
+
+
 @parameterized_class(ALL_GAS_EV_HYBRID_COMBOS)
 class TestHyundaiCanfdLFASteeringAltButtons(TestHyundaiCanfdLFASteeringAltButtonsBase):
   pass
@@ -306,6 +426,74 @@ class TestHyundaiCanfdLFASteeringLongAltButtons(TestHyundaiCanfdLFASteeringLongB
   def test_acc_cancel(self):
     # Alt buttons does not use SCC_CONTROL to cancel if longitudinal
     pass
+
+
+@parameterized_class(ALL_GAS_EV_HYBRID_COMBOS_CCNC)
+class TestHyundaiCanfdLFASteeringCCNC(TestHyundaiCanfdLFASteeringBase):
+
+  TX_MSGS = [[0x12A, 0], [0x1E0, 0], [0x1CF, 2], [0x7C4, 2]]
+  RELAY_MALFUNCTION_ADDRS = {0: (0x12A, 0x1E0, 0x161, 0x162), 2: (0x7C4, 0xEA)}
+  FWD_BLACKLISTED_ADDRS = {2: [0x12A, 0x1E0, 0x161, 0x162], 0: [0x7C4, 0xEA]}
+
+  @classmethod
+  def setUpClass(cls):
+    if cls.__name__ == "TestHyundaiCanfdLFASteeringCCNC":
+      cls.safety = None
+      raise unittest.SkipTest
+
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_canfd_generated")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, HyundaiSafetyFlags.CCNC | self.SAFETY_PARAM)
+    self.safety.init_tests()
+
+  def test_ccnc(self):
+    self.assertTrue(self._tx(self.packer.make_can_msg_safety("CCNC_0x161", self.STEER_BUS, {})))
+    self.assertTrue(self._tx(self.packer.make_can_msg_safety("CCNC_0x162", self.STEER_BUS, {})))
+
+  def test_tx_hook_on_wrong_safety_mode(self):
+    from opendbc.safety.tests.common import make_msg
+    import importlib
+    for test_name in ["TestElm327"]:
+      mod = importlib.import_module("opendbc.safety.tests.test_" + test_name.replace("Test", "").lower())
+      tx_list = [m for m in getattr(mod, test_name).TX_MSGS if m[0] != 0x7C4]  # skip overlapping 0x7C4 from Elm327
+      for addr, bus in tx_list:
+        if [addr, bus] not in self.TX_MSGS:
+          self.assertFalse(self._tx(make_msg(bus, addr)), f"allowed TX {addr=:#x} {bus=}")
+
+
+@parameterized_class(ALL_GAS_EV_HYBRID_COMBOS_CCNC)
+class TestHyundaiCanfdLFASteeringLongCCNC(TestHyundaiCanfdLFASteeringLongBase):
+
+  TX_MSGS = [[0x12A, 0], [0x1E0, 0], [0x1CF, 2], [0x7C4, 2], [0x1A0, 0]]
+  RELAY_MALFUNCTION_ADDRS = {0: (0x12A, 0x1E0, 0x161, 0x162, 0x1A0), 2: (0x7C4, 0xEA)}
+  FWD_BLACKLISTED_ADDRS = {2: [0x12A, 0x1E0, 0x161, 0x162, 0x1A0], 0: [0x7C4, 0xEA]}
+
+  @classmethod
+  def setUpClass(cls):
+    if cls.__name__ == "TestHyundaiCanfdLFASteeringLongCCNC":
+      cls.safety = None
+      raise unittest.SkipTest
+
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_canfd_generated")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, HyundaiSafetyFlags.CCNC | HyundaiSafetyFlags.LONG | self.SAFETY_PARAM)
+    self.safety.init_tests()
+
+  def test_ccnc(self):
+    self.assertTrue(self._tx(self.packer.make_can_msg_safety("CCNC_0x161", self.STEER_BUS, {})))
+    self.assertTrue(self._tx(self.packer.make_can_msg_safety("CCNC_0x162", self.STEER_BUS, {})))
+
+  def test_tx_hook_on_wrong_safety_mode(self):
+    from opendbc.safety.tests.common import make_msg
+    import importlib
+    for test_name in ["TestElm327"]:
+      mod = importlib.import_module("opendbc.safety.tests.test_" + test_name.replace("Test", "").lower())
+      tx_list = [m for m in getattr(mod, test_name).TX_MSGS if m[0] != 0x7C4]  # skip overlapping 0x7C4 from Elm327
+      for addr, bus in tx_list:
+        if [addr, bus] not in self.TX_MSGS:
+          self.assertFalse(self._tx(make_msg(bus, addr)), f"allowed TX {addr=:#x} {bus=}")
 
 
 if __name__ == "__main__":

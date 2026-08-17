@@ -2351,6 +2351,16 @@
     ],
     "package": "Smart Cruise Control (SCC)"
   },
+  "Kia PV5 2026": {
+    "platform": "KIA_PV5",
+    "make": "Kia",
+    "brand": "hyundai",
+    "model": "PV5",
+    "year": [
+      "2026"
+    ],
+    "package": "All"
+  },
   "Kia Seltos 2021": {
     "platform": "KIA_SELTOS",
     "make": "Kia",

@@ -46,8 +46,8 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
 
   def create_canfd_mock_button_messages(self, packer, CS, CAN, send_button) -> list[CanData]:
     can_sends = []
-    if self.CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS:
-      # TODO: resume for alt button cars
+    if self.CP.flags & (HyundaiFlags.CANFD_ALT_BUTTONS | HyundaiFlags.PLEOS_CONNECT_PV5):
+      # TODO: resume for alt button and Pleos Connect cars
       pass
     else:
       if (self.frame - self.last_button_frame) * DT_CTRL > 0.2:

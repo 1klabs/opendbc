@@ -1,5 +1,11 @@
 CM_ "IMPORT _hyundai_canfd_common.dbc";
 
+BO_ 994 PLEOS_CONNECT_DOORS: 16 XXX
+ SG_ DRIVER_DOOR : 64|1@1+ (1,0) [0|1] "" XXX
+ SG_ PASSENGER_DOOR : 66|1@1+ (1,0) [0|1] "" XXX
+ SG_ CARGO_LEFT_DOOR : 68|1@1+ (1,0) [0|1] "" XXX
+ SG_ CARGO_RIGHT_DOOR : 70|1@1+ (1,0) [0|1] "" XXX
+
 BO_ 53 ACCELERATOR: 32 XXX
  SG_ CHECKSUM : 0|16@1+ (1,0) [0|65535] "" XXX
  SG_ COUNTER : 16|8@1+ (1,0) [0|255] "" XXX
@@ -112,6 +118,7 @@ BO_ 234 MDPS: 24 SFA
  SG_ MDPS_ADASAciActvSta : 120|4@1+ (1,0) [0|0] "" CGW_CCU,ESC,RWA,RWS
  SG_ MDPS_ADASAciPluginSta : 124|2@1+ (1,0) [0|0] "" RWA
  SG_ MDPS_ADAS_AciFltSig : 126|2@1+ (1,0) [0|0] "" CGW_CCU,ESC,RWA
+
  SG_ MDPS_EstStrAnglVal : 128|16@1- (0.1,0) [0|0] "Deg" CGW_CCU,RWA,RWS
  SG_ MDPS_ADASAciActvSta_Lv2 : 144|4@1+ (1,0) [0|0] "" CGW_CCU,RWA
  SG_ MDPS_ADAS_AciFltSig_Lv2 : 148|3@1+ (1,0) [0|0] "" CGW_CCU,RWA
@@ -119,6 +126,12 @@ BO_ 234 MDPS: 24 SFA
  SG_ MDPS_TpaCanfltSta : 154|2@1+ (1,0) [0|0] "" RWA,VPC_C
  SG_ MDPS_TpaModeSta : 156|4@1+ (1,0) [0|0] "" RWA,VPC_C
  SG_ MDPS_TpaStrAnglVal : 160|16@1- (0.1,0) [0|0] "Deg" RWA,VPC_C
+
+BO_ 267 PLEOS_CONNECT_BUTTONS: 16 XXX
+ SG_ CRUISE_BUTTONS : 80|2@1+ (1,0) [0|3] "" XXX
+ SG_ PAUSE_RESUME_BTN : 82|1@1+ (1,0) [0|1] "" XXX
+ SG_ ADAPTIVE_CRUISE_MAIN_BTN : 83|1@1+ (1,0) [0|1] "" XXX
+ SG_ LDA_BTN : 87|1@1+ (1,0) [0|1] "" XXX
 
 BO_ 256 ACCELERATOR_BRAKE_ALT: 32 XXX
  SG_ CHECKSUM : 0|16@1+ (1,0) [0|65535] "" XXX
@@ -590,6 +603,9 @@ BO_ 512 ADRV_0x200: 8 ADRV
  SG_ SET_ME_E1 : 24|8@1+ (1,0) [0|255] "" XXX
  SG_ SET_ME_3A : 32|8@1+ (1,0) [0|255] "" XXX
 
+BO_ 522 PLEOS_CONNECT_SEATBELTS: 8 XXX
+ SG_ DRIVER_SEATBELT : 38|1@1+ (1,0) [0|1] "" XXX
+
 BO_ 593 RADAR_0x251: 16 FRONT_RADAR
  SG_ CHECKSUM : 0|16@1+ (1,0) [0|65535] "" XXX
  SG_ COUNTER : 16|8@1+ (1,0) [0|255] "" XXX
@@ -698,6 +714,12 @@ BO_ 961 BLINKER_STALKS: 8 XXX
  SG_ HIGHBEAM_BACKWARD : 26|1@0+ (1,0) [0|1] "" XXX
  SG_ LEFT_BLINKER : 30|1@0+ (1,0) [0|1] "" XXX
  SG_ RIGHT_BLINKER : 32|1@0+ (1,0) [0|1] "" XXX
+
+BO_ 995 PLEOS_CONNECT_BLINKERS: 16 XXX
+ SG_ LEFT_STALK : 74|1@1+ (1,0) [0|1] "" XXX
+ SG_ RIGHT_STALK : 76|1@1+ (1,0) [0|1] "" XXX
+ SG_ LEFT_LAMP : 93|1@1+ (1,0) [0|1] "" XXX
+ SG_ RIGHT_LAMP : 95|1@1+ (1,0) [0|1] "" XXX
 
 BO_ 1041 DOORS_SEATBELTS: 8 XXX
  SG_ CHECKSUM_MAYBE : 7|8@0+ (1,0) [0|65535] "" XXX
@@ -951,7 +973,7 @@ CM_ SG_ 1041 COUNTER_ALT "only increments on change";
 CM_ BO_ 1043 "Lamp signals do not seem universal on cars that use LKAS_ALT, but stalk signals do.";
 CM_ SG_ 1043 COUNTER_ALT "only increments on change";
 CM_ SG_ 1043 USE_ALT_LAMP "likely 1 on cars that use alt lamp signals";
-VAL_ 53 GEAR 0 "P" 5 "D" 6 "N" 7 "R";
+VAL_ 53 GEAR 0 "P" 4 "S" 5 "D" 6 "N" 7 "R";
 VAL_ 64 GEAR 0 "P" 5 "D" 6 "N" 7 "R";
 VAL_ 69 GEAR 0 "P" 5 "D" 6 "N" 7 "R";
 VAL_ 96 TRACTION_AND_STABILITY_CONTROL 0 "On" 5 "Limited" 1 "Off";
