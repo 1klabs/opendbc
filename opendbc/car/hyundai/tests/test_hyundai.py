@@ -29,6 +29,7 @@ NO_DATES_PLATFORMS = {
   CAR.HYUNDAI_ELANTRA,
   CAR.HYUNDAI_ELANTRA_GT_I30,
   CAR.KIA_CEED,
+  CAR.KIA_CEED_PHEV,
   CAR.KIA_FORTE,
   CAR.KIA_OPTIMA_G4,
   CAR.KIA_OPTIMA_G4_FL,
@@ -66,7 +67,7 @@ class TestPleosConnect(unittest.TestCase):
     self.assertAlmostEqual(pv5_cp.wheelbase, 2.995, places=6)
     self.assertAlmostEqual(pv5_cp.steerRatio, 16.4, places=6)
     assert pv5_cp.steerControlType == CarParams.SteerControlType.angle
-    assert not pv5_cp.enableBsm
+    assert not (pv5_cp.flags & HyundaiFlags.HAS_BSM)
     assert pv5_cp.flags & HyundaiFlags.SEND_LFA
     assert pv5_cp.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_ANGLE_STEERING
 

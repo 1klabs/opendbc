@@ -182,7 +182,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
       ret.stockFcw = (aeb_warning or scc_warning) and not aeb_braking
       ret.stockAeb = aeb_warning and aeb_braking
 
-    if self.CP.enableBsm:
+    if self.CP.flags & HyundaiFlags.HAS_BSM:
       ret.leftBlindspot = cp.vl["LCA11"]["CF_Lca_IndLeft"] != 0
       ret.rightBlindspot = cp.vl["LCA11"]["CF_Lca_IndRight"] != 0
 
@@ -264,7 +264,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     ret.steeringPressed = self.update_steering_pressed(abs(ret.steeringTorque) > self.params.STEER_THRESHOLD, 5)
     ret.steerFaultTemporary = cp.vl["MDPS"]["MDPS_LkaFailSta"] != 0
 
-    alt = ""
+    alt = "_ALT" if self.CP.carFingerprint == CAR.HYUNDAI_KONA_EV_2ND_GEN or self.CP_SP.flags & HyundaiFlagsSP.CCNC else ""
     if self.CP.flags & HyundaiFlags.CCNC:
       alt = "_ALT"
       if not self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
@@ -277,7 +277,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
       left_lamp = cp.vl["BLINKERS"][f"LEFT_LAMP{alt}"]
       right_lamp = cp.vl["BLINKERS"][f"RIGHT_LAMP{alt}"]
     ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_lamp(50, left_lamp, right_lamp)
-    if self.CP.enableBsm:
+    if self.CP.flags & HyundaiFlags.HAS_BSM:
       ret.leftBlindspot = bool(cp.vl["ADAS_CMD_50_50ms"]["BCW_LtIndSta"])
       ret.rightBlindspot = bool(cp.vl["ADAS_CMD_50_50ms"]["BCW_RtIndSta"])
 
