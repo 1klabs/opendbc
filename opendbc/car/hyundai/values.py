@@ -79,8 +79,7 @@ class HyundaiSafetyFlags(IntFlag):
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
   CANFD_ANGLE_STEERING = 1024
-  CCNC = 2048
-  PLEOS_CONNECT_PV5 = 4096
+  PLEOS_CONNECT = 4096
 
 
 # Hyundai/Kia/Genesis SCC (Smart Cruise Control) and steering architecture:
@@ -163,8 +162,7 @@ class HyundaiFlags(IntFlag):
   ALT_LIMITS_2 = 2 ** 26
 
   HAS_BSM = 2 ** 27  # blind spot monitoring
-  CCNC = 2 ** 28
-  PLEOS_CONNECT_PV5 = 2 ** 29
+  PLEOS_CONNECT = 2 ** 29  # Kia Pleos Connect infotainment platform (PV5): own HUD, MDPS handshake and body messages
   CANFD_ANGLE_STEERING = 2 ** 30
 
 
@@ -531,7 +529,7 @@ class CAR(Platforms):
     ],
     # Kia service data: 2995 mm wheelbase and 16.4:1 steering ratio at +/-20 degrees.
     CarSpecs(wheelbase=2.995, steerRatio=16.4, tireStiffnessFactor=0.65),
-    flags=HyundaiFlags.EV | HyundaiFlags.CCNC | HyundaiFlags.PLEOS_CONNECT_PV5 |
+    flags=HyundaiFlags.EV | HyundaiFlags.PLEOS_CONNECT |
           HyundaiFlags.CANFD_ANGLE_STEERING | HyundaiFlags.SEND_LFA,
   )
   KIA_SELTOS = HyundaiPlatformConfig(

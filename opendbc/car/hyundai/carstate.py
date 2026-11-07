@@ -58,7 +58,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     self.accelerator_msg_canfd = "ACCELERATOR" if CP.flags & HyundaiFlags.EV else \
                                  "ACCELERATOR_ALT" if CP.flags & HyundaiFlags.HYBRID else \
                                  "ACCELERATOR_BRAKE_ALT"
-    self.cruise_btns_msg_canfd = "PLEOS_CONNECT_BUTTONS" if CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5 else \
+    self.cruise_btns_msg_canfd = "PLEOS_CONNECT_BUTTONS" if CP.flags & HyundaiFlags.PLEOS_CONNECT else \
                                  "CRUISE_BUTTONS_ALT" if CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS else \
                                  "CRUISE_BUTTONS"
     self.is_metric = False
@@ -66,6 +66,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
 
     self.cruise_info = {}
     self.msg_161, self.msg_162, self.msg_1b5 = {}, {}, {}
+    self.cam_lfa_alt = {}
 
     # On some cars, CLU15->CF_Clu_VehicleSpeed can oscillate faster than the dash updates. Sample at 5 Hz
     self.cluster_speed = 0
@@ -235,7 +236,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
 
     ret.brakePressed = cp.vl["TCS"]["DriverBraking"] == 1
 
-    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT:
       ret.doorOpen = any(cp.vl["PLEOS_CONNECT_DOORS"][signal] == 1 for signal in (
         "DRIVER_DOOR", "PASSENGER_DOOR", "CARGO_LEFT_DOOR", "CARGO_RIGHT_DOOR",
       ))
@@ -264,16 +265,18 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     ret.steeringPressed = self.update_steering_pressed(abs(ret.steeringTorque) > self.params.STEER_THRESHOLD, 5)
     ret.steerFaultTemporary = cp.vl["MDPS"]["MDPS_LkaFailSta"] != 0
 
-    alt = "_ALT" if self.CP.carFingerprint == CAR.HYUNDAI_KONA_EV_2ND_GEN or self.CP_SP.flags & HyundaiFlagsSP.CCNC else ""
-    if self.CP.flags & HyundaiFlags.CCNC:
-      alt = "_ALT"
-      if not self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
-        self.msg_161, self.msg_162, self.msg_1b5 = map(copy.copy, (cp_cam.vl["CCNC_0x161"], cp_cam.vl["CCNC_0x162"], cp_cam.vl["FR_CMR_03_50ms"]))
-        self.cruise_info = copy.copy((cp_cam if self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else cp).vl["SCC_CONTROL"])
-    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT:
+      # camera frames we replace, kept to pass through stock state
+      self.msg_161, self.msg_162, self.msg_1b5 = map(copy.copy, (cp_cam.vl["CCNC_0x161"], cp_cam.vl["CCNC_0x162"], cp_cam.vl["FR_CMR_03_50ms"]))
+      self.cruise_info = copy.copy((cp_cam if self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else cp).vl["SCC_CONTROL"])
+      self.mdps = copy.copy(cp.vl["MDPS"])
+      self.cam_lfa_alt = copy.copy(cp_cam.vl["LFA_ALT"])
+
       left_lamp = cp.vl["PLEOS_CONNECT_BLINKERS"]["LEFT_LAMP"]
       right_lamp = cp.vl["PLEOS_CONNECT_BLINKERS"]["RIGHT_LAMP"]
     else:
+      # TODO: alt signal usage may be described by cp.vl['BLINKERS']['USE_ALT_LAMP']
+      alt = "_ALT" if self.CP.carFingerprint == CAR.HYUNDAI_KONA_EV_2ND_GEN or self.CP_SP.flags & HyundaiFlagsSP.CCNC else ""
       left_lamp = cp.vl["BLINKERS"][f"LEFT_LAMP{alt}"]
       right_lamp = cp.vl["BLINKERS"][f"RIGHT_LAMP{alt}"]
     ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_lamp(50, left_lamp, right_lamp)
@@ -305,7 +308,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
     prev_lda_button = self.lda_button
-    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+    if self.CP.flags & HyundaiFlags.PLEOS_CONNECT:
       buttons = cp.vl[self.cruise_btns_msg_canfd]
       cruise_button = Buttons.CANCEL if buttons["PAUSE_RESUME_BTN"] else buttons["CRUISE_BUTTONS"]
       self.cruise_buttons.append(cruise_button)
@@ -345,11 +348,11 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
         # this message is 50Hz but the ECU frequently stops transmitting for ~0.5s
         ("CRUISE_BUTTONS", 1)
       ]
-    if CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+    if CP.flags & HyundaiFlags.PLEOS_CONNECT:
       msgs.append(("PLEOS_CONNECT_BUTTONS", 1))
 
     pt_parser = CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, CanBus(CP).ECAN)
-    if CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
+    if CP.flags & HyundaiFlags.PLEOS_CONNECT:
       pt_parser.set_counter_step("ACCELERATOR", 2)
       pt_parser.set_counter_step("MANUAL_SPEED_LIMIT_ASSIST", 2)
 

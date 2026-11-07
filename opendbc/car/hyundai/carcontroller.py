@@ -11,12 +11,12 @@ from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 
 from opendbc.sunnypilot.car.hyundai.ccnc import CcncCarController
-from opendbc.sunnypilot.car.hyundai.pv5 import create_pv5_cluster
 from opendbc.sunnypilot.car.hyundai.escc import EsccCarController
 from opendbc.sunnypilot.car.hyundai.icbm import IntelligentCruiseButtonManagementInterface
 from opendbc.sunnypilot.car.hyundai.longitudinal.controller import LongitudinalController
 from opendbc.sunnypilot.car.hyundai.lead_data_ext import LeadDataCarController
 from opendbc.sunnypilot.car.hyundai.mads import MadsCarController
+from opendbc.sunnypilot.car.hyundai.pleos_connect import PleosConnectCarController
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -76,7 +76,7 @@ def process_hud_alert(enabled, fingerprint, hud_control):
 
 
 class CarController(CarControllerBase, CcncCarController, EsccCarController, LeadDataCarController, LongitudinalController, MadsCarController,
-                    IntelligentCruiseButtonManagementInterface):
+                    IntelligentCruiseButtonManagementInterface, PleosConnectCarController):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
     CcncCarController.__init__(self, CP, CP_SP)
@@ -85,6 +85,7 @@ class CarController(CarControllerBase, CcncCarController, EsccCarController, Lea
     LeadDataCarController.__init__(self, CP)
     LongitudinalController.__init__(self, CP, CP_SP)
     IntelligentCruiseButtonManagementInterface.__init__(self, CP, CP_SP)
+    PleosConnectCarController.__init__(self, CP)
     self.CAN = CanBus(CP)
     self.params = CarControllerParams(CP)
     self.packer = CANPacker(dbc_names[Bus.pt])
@@ -166,6 +167,7 @@ class CarController(CarControllerBase, CcncCarController, EsccCarController, Lea
       can_sends.extend(self.create_canfd_msgs(apply_steer_req, apply_torque, set_speed_in_units, accel,
                                               stopping, hud_control, CS, CC))
       can_sends.extend(CcncCarController.update(self, CS, CC))
+      can_sends.extend(PleosConnectCarController.update(self, CS, CC))
     else:
       # Hold torque with induced temporary fault when cutting the actuation bit
       # FIXME: we don't use this with CAN FD?
@@ -240,7 +242,7 @@ class CarController(CarControllerBase, CcncCarController, EsccCarController, Lea
 
     lka_steering = self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG
     lka_steering_long = lka_steering and self.CP.openpilotLongitudinalControl
-    ccnc_non_hda2 = self.CP.flags & HyundaiFlags.CCNC and not lka_steering
+    pleos_connect = self.CP.flags & HyundaiFlags.PLEOS_CONNECT
 
     # steering control
     can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled, apply_steer_req,
@@ -251,14 +253,9 @@ class CarController(CarControllerBase, CcncCarController, EsccCarController, Lea
       can_sends.append(hyundaicanfd.create_suppress_lfa(self.packer, self.CAN, CS.lfa_block_msg,
                                                         self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT))
 
-    # LFA and HDA icons
-    if self.frame % 5 == 0 and (not lka_steering or lka_steering_long) and not self.ccnc_lfa_steering:
-      if ccnc_non_hda2:
-        can_sends.extend(create_pv5_cluster(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled, CC.hudControl, CC.leftBlinker,
-                                           CC.rightBlinker, CS.msg_161, CS.msg_162, CS.msg_1b5, CS.is_metric, CS.out, CS.main_cruise_enabled,
-                                           self.lfa_icon))
-      else:
-        can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, self.lfa_icon))
+    # LFA and HDA icons, Pleos Connect cluster is sent by PleosConnectCarController
+    if self.frame % 5 == 0 and (not lka_steering or lka_steering_long) and not self.ccnc_lfa_steering and not pleos_connect:
+      can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, self.lfa_icon))
 
     # blinkers
     if lka_steering and self.CP.flags & HyundaiFlags.CANFD_ENABLE_BLINKERS:
@@ -267,12 +264,12 @@ class CarController(CarControllerBase, CcncCarController, EsccCarController, Lea
     if self.CP.openpilotLongitudinalControl:
       if lka_steering:
         can_sends.extend(hyundaicanfd.create_adrv_messages(self.packer, self.CAN, self.frame))
-      elif not ccnc_non_hda2:
+      elif not pleos_connect:
         can_sends.extend(hyundaicanfd.create_fca_warning_light(self.packer, self.CAN, self.frame))
       if self.frame % 2 == 0:
         can_sends.append(hyundaicanfd.create_acc_control(self.packer, self.CAN, CC.enabled, self.accel_last, accel, stopping, CC.cruiseControl.override,
                                                          set_speed_in_units, hud_control, self.lead_data, CS.main_cruise_enabled, self.tuning,
-                                                         CS.cruise_info if ccnc_non_hda2 else None))
+                                                         CS.cruise_info if pleos_connect else None))
         self.accel_last = accel
     else:
       # button presses
@@ -280,7 +277,7 @@ class CarController(CarControllerBase, CcncCarController, EsccCarController, Lea
         # cruise cancel
         if CC.cruiseControl.cancel:
           # Here we send ACC message to cancel, not buttons. Don't delay
-          if self.CP.flags & (HyundaiFlags.CANFD_ALT_BUTTONS | HyundaiFlags.PLEOS_CONNECT_PV5):
+          if self.CP.flags & (HyundaiFlags.CANFD_ALT_BUTTONS | HyundaiFlags.PLEOS_CONNECT):
             can_sends.append(hyundaicanfd.create_acc_cancel(self.packer, self.CP, self.CAN, CS.cruise_info))
             self.last_button_frame = self.frame
           elif self.cancel_counter > CANCEL_BUTTON_DELAY_FRAMES:
@@ -290,7 +287,7 @@ class CarController(CarControllerBase, CcncCarController, EsccCarController, Lea
 
         # cruise standstill resume
         elif CC.cruiseControl.resume:
-          if self.CP.flags & (HyundaiFlags.CANFD_ALT_BUTTONS | HyundaiFlags.PLEOS_CONNECT_PV5):
+          if self.CP.flags & (HyundaiFlags.CANFD_ALT_BUTTONS | HyundaiFlags.PLEOS_CONNECT):
             # TODO: resume for alt button cars
             pass
           else:

@@ -60,7 +60,7 @@ class TestPleosConnect(unittest.TestCase):
     fingerprint = gen_empty_fingerprint()
     for car_model in CAR:
       CP = CarInterface.get_params(car_model, fingerprint, [], False, False, False)
-      assert bool(CP.flags & HyundaiFlags.PLEOS_CONNECT_PV5) == (car_model == CAR.KIA_PV5)
+      assert bool(CP.flags & HyundaiFlags.PLEOS_CONNECT) == (car_model == CAR.KIA_PV5)
       assert bool(CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING) == (car_model == CAR.KIA_PV5)
 
     pv5_cp = CarInterface.get_params(CAR.KIA_PV5, fingerprint, [], False, False, False)
@@ -152,7 +152,7 @@ class TestPleosConnect(unittest.TestCase):
     assert pt_parser.message_states[0x2E0].counter_step == 2
     assert pt_parser.message_states[0x10B].frequency == 1
 
-    assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.PLEOS_CONNECT_PV5
+    assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.PLEOS_CONNECT
 
 
 class TestHyundaiFingerprint(unittest.TestCase):

@@ -41,7 +41,8 @@ class CarInterface(CarInterfaceBase):
       lka_steering = 0x50 in fingerprint[cam_can] or 0x110 in fingerprint[cam_can]
       CAN = CanBus(None, fingerprint, lka_steering)
 
-      ret.alphaLongitudinalAvailable = not (ret.flags & HyundaiFlags.CANFD_NO_RADAR_DISABLE)
+      # TODO: openpilot longitudinal is not validated on Pleos Connect, stock SCC only
+      ret.alphaLongitudinalAvailable = not (ret.flags & (HyundaiFlags.CANFD_NO_RADAR_DISABLE | HyundaiFlags.PLEOS_CONNECT))
       if lka_steering and Ecu.adas not in [fw.ecu for fw in car_fw]:
         # this needs to be figured out for cars without an ADAS ECU
         ret.alphaLongitudinalAvailable = False
@@ -86,10 +87,8 @@ class CarInterface(CarInterfaceBase):
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ALT_BUTTONS.value
       if ret.flags & HyundaiFlags.CANFD_CAMERA_SCC:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CAMERA_SCC.value
-      if ret.flags & HyundaiFlags.CCNC and not ret.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
-      if ret.flags & HyundaiFlags.PLEOS_CONNECT_PV5:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.PLEOS_CONNECT_PV5.value
+      if ret.flags & HyundaiFlags.PLEOS_CONNECT:
+        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.PLEOS_CONNECT.value
       if ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
         ret.steerControlType = structs.CarParams.SteerControlType.angle
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ANGLE_STEERING.value
@@ -200,7 +199,9 @@ class CarInterface(CarInterfaceBase):
       if 0x1fa in fingerprint[CAN.ECAN]:
         ret.flags |= HyundaiFlagsSP.SPEED_LIMIT_AVAILABLE.value
 
-      if any(0x161 in fingerprint[b] and 0x162 in fingerprint[b] for b in (CAN.ECAN, CAN.CAM)):
+      # Pleos Connect also carries 0x161/0x162, but uses its own HUD and MDPS handling
+      if any(0x161 in fingerprint[b] and 0x162 in fingerprint[b] for b in (CAN.ECAN, CAN.CAM)) and \
+         not stock_cp.flags & HyundaiFlags.PLEOS_CONNECT:
         ret.flags |= HyundaiFlagsSP.CCNC.value
     else:
       # Detect smartMDPS, which bypasses EPS low-speed lockout, allowing sunnypilot to send steering commands down to 0
@@ -232,7 +233,7 @@ class CarInterface(CarInterfaceBase):
                                    CAR.KIA_SELTOS_2023_NON_SCC, CAR.GENESIS_G70_2021_NON_SCC):
       stock_cp.dashcamOnly = True
 
-    ret.intelligentCruiseButtonManagementAvailable = not (stock_cp.flags & (HyundaiFlags.CANFD_ALT_BUTTONS | HyundaiFlags.PLEOS_CONNECT_PV5))
+    ret.intelligentCruiseButtonManagementAvailable = not (stock_cp.flags & (HyundaiFlags.CANFD_ALT_BUTTONS | HyundaiFlags.PLEOS_CONNECT))
 
     return ret
 

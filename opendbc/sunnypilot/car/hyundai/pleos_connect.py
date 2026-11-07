@@ -1,5 +1,7 @@
-# PV5-specific cluster encoding, kept separate from upstream CCNC behavior.
+# Kia Pleos Connect (PV5): the camera's HUD, MDPS and LFA_ALT frames are replaced by openpilot.
+# Kept separate from sunnypilot's CCNC handling, which targets torque steering cars.
 from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.hyundai.values import HyundaiFlags
 
 LANE_CHANGE_SPEED_MIN = 8.9408
 LANELINE_CURVATURE = {i: (31 if i == -1 else 13 - abs(i + 15)) if i < 0 else 15 + i for i in range(-15, 16)}
@@ -38,7 +40,7 @@ def lane_positions(msg_1b5):
   return leftlane, rightlane
 
 
-def create_pv5_cluster(packer, CAN, openpilotLongitudinalControl, enabled, hud, leftBlinker, rightBlinker, msg_161, msg_162, msg_1b5,
+def create_pleos_connect_cluster(packer, CAN, openpilotLongitudinalControl, enabled, hud, leftBlinker, rightBlinker, msg_161, msg_162, msg_1b5,
                        is_metric, out, main_cruise_enabled, lfa_icon):
   # Never modify the cached camera frames when constructing replacement HUD messages.
   msg_161 = msg_161.copy()
@@ -110,3 +112,42 @@ def create_pv5_cluster(packer, CAN, openpilotLongitudinalControl, enabled, hud, 
     msg_162["LEAD_DISTANCE"] = msg_1b5["Longitudinal_Distance"]
 
   return [packer.make_can_msg(msg, CAN.ECAN, data) for msg, data in [("CCNC_0x161", msg_161), ("CCNC_0x162", msg_162)]]
+
+
+def create_pleos_connect_mdps(packer, CAN, mdps, cam_lfa_alt):
+  # The camera expects the MDPS to acknowledge its own angle control request, and latches
+  # FAULT_LFA/FAULT_LSS/FAULT_DAS after ~0.5s without it. Its LFA_ALT never reaches the MDPS,
+  # so mirror the request back the same way the MDPS does on a stock car (~30ms later).
+  values = mdps.copy()
+  values["MDPS_ADASAciActvSta_Lv2"] = cam_lfa_alt["ADAS_ActvACILvl2Sta"]
+  return packer.make_can_msg("MDPS", CAN.CAM, values)
+
+
+class PleosConnectCarController:
+  def __init__(self, CP):
+    self.pleos_connect = bool(CP.flags & HyundaiFlags.PLEOS_CONNECT)
+    self.last_counters: dict[int, int] = {}
+
+  def _new_frame(self, addr: int, msg) -> bool:
+    # Forward once per source frame so the receiver sees the source's counter sequence
+    counter = msg.get("COUNTER")
+    last = self.last_counters.get(addr)
+    self.last_counters[addr] = counter
+    return last is not None and counter != last
+
+  def update(self, CS, CC):
+    can_sends = []
+    if not self.pleos_connect:
+      return can_sends
+
+    if self._new_frame(0xEA, CS.mdps):
+      can_sends.append(create_pleos_connect_mdps(self.packer, self.CAN, CS.mdps, CS.cam_lfa_alt))
+
+    new_161, new_162 = self._new_frame(0x161, CS.msg_161), self._new_frame(0x162, CS.msg_162)
+    if new_161 or new_162:
+      msg_161, msg_162 = create_pleos_connect_cluster(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled,
+                                                      CC.hudControl, CC.leftBlinker, CC.rightBlinker, CS.msg_161, CS.msg_162,
+                                                      CS.msg_1b5, CS.is_metric, CS.out, CS.main_cruise_enabled, self.lfa_icon)
+      can_sends += [msg for msg, new in ((msg_161, new_161), (msg_162, new_162)) if new]
+
+    return can_sends

@@ -163,8 +163,8 @@ class TestHyundaiCanfdPleosConnectButtons(unittest.TestCase):
     self.packer = CANPackerSafety("hyundai_canfd_generated")
     self.safety = libsafety_py.libsafety
     self.safety.set_current_safety_param_sp(0)
-    safety_param = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.CCNC | \
-                   HyundaiSafetyFlags.CANFD_ALT_BUTTONS | HyundaiSafetyFlags.PLEOS_CONNECT_PV5
+    safety_param = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC | \
+                   HyundaiSafetyFlags.CANFD_ALT_BUTTONS | HyundaiSafetyFlags.PLEOS_CONNECT
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, safety_param)
     self.safety.init_tests()
 
@@ -202,8 +202,8 @@ class TestHyundaiCanfdPv5AngleSteering(unittest.TestCase):
     self.packer = CANPackerSafety("hyundai_canfd_generated")
     self.safety = libsafety_py.libsafety
     self.safety.set_current_safety_param_sp(0)
-    self.safety_param = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.CCNC | \
-                        HyundaiSafetyFlags.PLEOS_CONNECT_PV5 | HyundaiSafetyFlags.CANFD_ANGLE_STEERING
+    self.safety_param = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC | \
+                        HyundaiSafetyFlags.PLEOS_CONNECT | HyundaiSafetyFlags.CANFD_ANGLE_STEERING
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, self.safety_param)
     self.safety.init_tests()
 
@@ -301,6 +301,16 @@ class TestHyundaiCanfdPv5AngleSteering(unittest.TestCase):
     self.assertFalse(self.safety.safety_tx_hook(torque_steering))
     self.assertFalse(self.safety.safety_tx_hook(standard_hud))
     self.assertFalse(self.safety.safety_tx_hook(standard_buttons))
+
+  def test_pleos_connect_tx_msgs(self):
+    # Pleos Connect replaces the camera HUD and MDPS handshake without sunnypilot's CCNC flag
+    for msg, bus in (("CCNC_0x161", 0), ("CCNC_0x162", 0), ("MDPS", 2)):
+      self.assertTrue(self.safety.safety_tx_hook(self.packer.make_can_msg_safety(msg, bus, {})))
+
+  def test_pleos_connect_fwd(self):
+    for bus, addr in ((2, 0x161), (2, 0x162), (0, 0xEA)):
+      self.assertEqual(-1, self.safety.safety_fwd_hook(bus, addr))
+    self.assertEqual(2, self.safety.safety_fwd_hook(0, 0xA0))
 
 
 @parameterized_class(ALL_GAS_EV_HYBRID_COMBOS)
