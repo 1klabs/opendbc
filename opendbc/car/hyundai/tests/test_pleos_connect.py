@@ -7,8 +7,32 @@ from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 from opendbc.car.vehicle_model import VehicleModel, calc_slip_factor
-from opendbc.sunnypilot.car.hyundai.pleos_connect import CURVATURE_STEP_BP, create_pleos_connect_cluster, create_pleos_connect_mdps, curvature_step, \
-  curvature_to_can, lane_curvature, lane_positions
+from opendbc.sunnypilot.car.hyundai.pleos_connect import CURVATURE_STEP_BP, LANE_CHANGE_NEAR, LANE_CHANGE_REVEAL_FRAMES, LaneChangeDisplay, \
+  create_pleos_connect_cluster, create_pleos_connect_mdps, curvature_step, curvature_to_can, lane_curvature
+
+
+def lane_msg(left, right, quality=3, lead=0.):
+  # FR_CMR_03_50ms with lane line offsets in m, the camera reports the left line negative
+  return {"Info_LftLnPosVal": left, "Info_RtLnPosVal": right, "Info_LftLnQualSta": quality, "Info_RtLnQualSta": quality,
+          "Longitudinal_Distance": lead}
+
+
+def lane_change_drive(direction, relabel_at=13):
+  # car moving 0.17 m per frame towards the target lane from the lane center. After crossing the camera keeps the crossed line
+  # on the old side with a flipped sign for a few frames before relabeling it, plus one frame of noise backwards
+  sign = 1 if direction == "left" else -1
+  msgs = []
+  for k in range(26):
+    lateral = 0.17 * k + (0.1 if k == 5 else 0.)  # noise: one frame looks closer than the next
+    if k == 6:
+      lateral = 0.17 * 4
+    if k < relabel_at:  # crossed line still labeled on the old side
+      near, far = 1.7 - lateral, 1.7 + lateral
+    else:  # relabeled: crossed line on the far side, new outer line on the near side
+      near, far = 3.4 - (lateral - 1.7), lateral - 1.7
+    left, right = (-near, far) if sign == 1 else (-far, near)
+    msgs.append(lane_msg(left, right))
+  return msgs
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP, HyundaiSafetyFlagsSP
 from opendbc.sunnypilot.car.interfaces import setup_interfaces
 
@@ -68,9 +92,43 @@ class TestPleosConnectIntegration(unittest.TestCase):
       self.assertEqual([addr for addr, _, _ in sends], [0x161, 0x162])
       self.assertEqual((msg_161, msg_162, msg_1b5), original)
 
-  def test_missing_lane_positions(self):
-    self.assertEqual(lane_positions({"Info_LftLnPosVal": 0, "Info_RtLnPosVal": 0,
-                                     "Info_LftLnQualSta": 0, "Info_RtLnQualSta": 0}), (15, 15))
+  def test_lane_change_display(self):
+    for direction, relabel_at in itertools.product(("left", "right"), (13, 10)):
+      near, far = ("LEFT", "RIGHT") if direction == "left" else ("RIGHT", "LEFT")
+      display = LaneChangeDisplay()
+      frames = [display.update(direction, msg) for msg in lane_change_drive(direction, relabel_at)]
+      crossing = next(i for i, f in enumerate(frames) if f["LANE_HIGHLIGHT"])
+      pre, post = frames[:crossing], frames[crossing:]
+      with self.subTest(direction=direction, relabel_at=relabel_at):
+        self.assertEqual(crossing, 10)  # center on the line, or relabeled first when frames skip the zero crossing
+        # starts centered with the target lane filled and the line to cross dashed
+        self.assertEqual((pre[0][f"LANE_{near}"], pre[0][f"LANELINE_{near}"], pre[0][f"LANELINE_{far}"]), (1, 8, 2))
+        self.assertEqual((pre[0][f"LANELINE_{near}_POSITION"], pre[0][f"LANELINE_{far}_POSITION"]), (15, 15))
+        # the car only moves towards the crossed line, then away from it, through camera noise, sign flips and relabeling
+        near_pos = [f[f"LANELINE_{near}_POSITION"] for f in pre]
+        crossed_pos = [f[f"LANELINE_{far}_POSITION"] for f in post]
+        self.assertEqual(near_pos, sorted(near_pos, reverse=True))
+        self.assertEqual(crossed_pos, sorted(crossed_pos))
+        self.assertLess(crossed_pos[0], LANE_CHANGE_NEAR)
+        for f in pre:
+          close = f[f"LANELINE_{near}_POSITION"] <= LANE_CHANGE_NEAR
+          # close to the crossed line it turns green and the far line hides, waiting under the car
+          self.assertEqual(f[f"LANELINE_{near}"], 10 if close else 8)
+          self.assertEqual(f[f"LANELINE_{far}"], 1 if close else 2)
+          self.assertEqual(f[f"LANELINE_{far}_POSITION"], f[f"LANELINE_{near}_POSITION"] if close else 30 - f[f"LANELINE_{near}_POSITION"])
+        for i, f in enumerate(post):
+          # the crossed line stays green on the other side, the new lane takes the fill and shows its outer line once settled
+          self.assertEqual((f[f"LANE_{near}"], f["LANE_HIGHLIGHT"], f[f"LANELINE_{far}"]), (0, 1, 10))
+          self.assertEqual(f[f"LANELINE_{near}"], 1 if i < LANE_CHANGE_REVEAL_FRAMES else 2)
+          self.assertEqual(f[f"LANELINE_{near}_POSITION"], 30 - f[f"LANELINE_{far}_POSITION"])
+      # stopping the lane change resets the display
+      self.assertIsNone(display.update(None, lane_msg(-1.7, 1.7)))
+      self.assertEqual(display.update(direction, lane_msg(-1.7, 1.7))["LANE_HIGHLIGHT"], 0)
+
+  def test_lane_change_display_without_lanes(self):
+    display = LaneChangeDisplay()
+    fields = display.update("left", lane_msg(0., 0., quality=0))
+    self.assertEqual((fields["LANELINE_LEFT_POSITION"], fields["LANELINE_RIGHT_POSITION"], fields["LANE_LEFT"]), (15, 15, 1))
 
   def test_not_ccnc(self):
     # PV5 carries 0x161/0x162 like CCNC cars, but must not take sunnypilot's torque steering CCNC path
@@ -152,7 +210,7 @@ class TestPleosConnectIntegration(unittest.TestCase):
     parser.vl["CCNC_0x161"]
     parser.vl["CCNC_0x162"]
     hud = structs.CarControl().hudControl
-    msg_1b5 = {"Info_LftLnPosVal": 0, "Info_RtLnPosVal": 0, "Info_LftLnQualSta": 0, "Info_RtLnQualSta": 0}
+    msg_1b5 = lane_msg(0, 0, quality=0)
     for i, (ldw, lfa_icon, cam_lka_icon) in enumerate(itertools.product((False, True), (False, True), (0, 1, 3, 4))):
       msg_161 = {"LKA_ICON": cam_lka_icon, "LANELINE_LEFT": 8, "LANELINE_RIGHT": 4, "ALERTS_2": 0, "ALERTS_3": 0, "ALERTS_5": 0,
                  "SOUNDS_4": 0, "LFA_ICON": 2}
@@ -206,23 +264,47 @@ class TestPleosConnectIntegration(unittest.TestCase):
     parser = CANParser("hyundai_canfd_generated", [], can.ECAN)
     parser.vl["CCNC_0x161"]
     hud = structs.CarControl().hudControl
-    msg_1b5 = {"Info_LftLnPosVal": 0, "Info_RtLnPosVal": 0, "Info_LftLnQualSta": 0, "Info_RtLnQualSta": 0}
+    msg_1b5 = lane_msg(0, 0, quality=0)
     hud.leftLaneVisible = hud.rightLaneVisible = True  # always set by controlsd
     sig = packer.dbc.name_to_msg["CCNC_0x161"].sigs["LANELINE_CURVATURE"]
+    lane_change = {"LANELINE_LEFT": 10, "LANELINE_RIGHT": 1, "LANE_LEFT": 1}
     cases = [
-      # lfa_icon, blinker, camera (left, right), curvature step -> expected (left, right), raw curvature
-      (True, False, (8, 2), -3, (8, 2), 18),  # camera dashed/solid kept, right curve
-      (True, False, (0, 0), 4, (2, 2), 4),    # no camera line type: solid
-      (True, True, (8, 8), 4, (6, 6), 0),     # blinker: lane change lines, straight
-      (False, False, (8, 2), 4, (0, 0), 0),   # not lateral active: hidden, straight
+      # lfa_icon, blinker, camera (left, right), curvature step, lane change -> expected (left, right), raw curvature
+      (True, False, (8, 2), -3, None, (8, 2), 18),         # camera dashed/solid kept, right curve
+      (True, False, (0, 0), 4, None, (2, 2), 4),           # no camera line type: solid
+      (True, True, (8, 8), 4, None, (8, 8), 4),            # blinker without a lane change (blocked): normal lines
+      (True, True, (8, 8), 4, lane_change, (10, 1), 0),    # lane change display, straight
+      (False, True, (8, 2), 4, lane_change, (0, 0), 0),    # not lateral active: hidden, straight, no lane change display
     ]
-    for i, (lfa_icon, blinker, cam, step, expected, raw_curv) in enumerate(cases):
+    for i, (lfa_icon, blinker, cam, step, lc, expected, raw_curv) in enumerate(cases):
       msg_161 = {"LKA_ICON": 3, "LANELINE_LEFT": cam[0], "LANELINE_RIGHT": cam[1], "ALERTS_2": 0, "ALERTS_3": 0, "ALERTS_5": 0,
                  "SOUNDS_4": 0, "LFA_ICON": 0}
       sends = create_pleos_connect_cluster(packer, can, False, lfa_icon, hud, blinker, False, msg_161, {}, msg_1b5,
-                                           True, structs.CarState(), False, lfa_icon, True, step)
+                                           True, structs.CarState(), False, lfa_icon, True, step, lc)
       addr, dat, bus = sends[0]
       parser.update((i + 1, [(addr, dat, bus)]))
       with self.subTest(case=i):
         self.assertEqual((parser.vl["CCNC_0x161"]["LANELINE_LEFT"], parser.vl["CCNC_0x161"]["LANELINE_RIGHT"]), expected)
         self.assertEqual(sig.get_raw_value(dat), raw_curv)
+        if lc is not None and lfa_icon:
+          self.assertEqual(parser.vl["CCNC_0x161"]["LANE_LEFT"], 1)
+
+  def test_cluster_chevrons_and_lane_fill_length(self):
+    cp = CarInterface.get_params(CAR.KIA_PV5, gen_empty_fingerprint(), [], False, False, False)
+    can = CanBus(cp)
+    packer = CANPacker("hyundai_canfd_generated")
+    parser = CANParser("hyundai_canfd_generated", [], can.ECAN)
+    parser.vl["CCNC_0x161"]
+    hud = structs.CarControl().hudControl
+    msg_161 = {"LKA_ICON": 3, "LANELINE_LEFT": 0, "LANELINE_RIGHT": 0, "ALERTS_2": 0, "ALERTS_3": 0, "ALERTS_5": 0, "SOUNDS_4": 0, "LFA_ICON": 0}
+    for i, (blindspot, lead) in enumerate(itertools.product((False, True), (0., 42.5))):
+      out = structs.CarState()
+      out.leftBlindspot = blindspot
+      sends = create_pleos_connect_cluster(packer, can, False, True, hud, True, False, msg_161, {}, lane_msg(-1.7, 1.7, lead=lead),
+                                           True, out, False, True, True)
+      parser.update((i + 1, [sends[0]]))
+      with self.subTest(blindspot=blindspot, lead=lead):
+        # no chevrons into an occupied lane, like stock
+        self.assertEqual(parser.vl["CCNC_0x161"]["LCA_LEFT_ARROW"], 0 if blindspot else 2)
+        # the ego lane fill reaches the lead vehicle, or as far as possible without one
+        self.assertAlmostEqual(parser.vl["CCNC_0x161"]["LANE_HIGHLIGHT_DISTANCE"], lead if lead else 204.7, places=1)
