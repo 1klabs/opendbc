@@ -523,15 +523,6 @@ class CAR(Platforms):
     CarSpecs(wheelbase=2.8, steerRatio=13.75, tireStiffnessFactor=0.5),
     flags=HyundaiFlags.HYBRID | HyundaiFlags.UNSUPPORTED_LONGITUDINAL,
   )
-  KIA_PV5 = HyundaiCanFDPlatformConfig(
-    [
-      HyundaiCarDocs("Kia PV5 2026", "All", car_parts=CarParts.common([CarHarness.hyundai_a])),
-    ],
-    # Kia service data: 2995 mm wheelbase and 16.4:1 steering ratio at +/-20 degrees.
-    CarSpecs(wheelbase=2.995, steerRatio=16.4, tireStiffnessFactor=0.65),
-    flags=HyundaiFlags.EV | HyundaiFlags.PLEOS_CONNECT |
-          HyundaiFlags.CANFD_ANGLE_STEERING | HyundaiFlags.SEND_LFA,
-  )
   KIA_SELTOS = HyundaiPlatformConfig(
     [HyundaiCarDocs("Kia Seltos 2021", car_parts=CarParts.common([CarHarness.hyundai_a]))],
     CarSpecs(wheelbase=2.63, steerRatio=14.56),
@@ -719,6 +710,15 @@ class CAR(Platforms):
   HYUNDAI_SONATA_HEV_2024 = HyundaiCanFDPlatformConfig(
     [HyundaiCarDocs("Hyundai Sonata Hybrid (without HDA II) 2024-26", car_parts=CarParts.common([CarHarness.hyundai_a]))],
     CarSpecs(wheelbase=2.84, steerRatio=13.27),
+  )
+  KIA_PV5 = HyundaiCanFDPlatformConfig(
+    [
+      HyundaiCarDocs("Kia PV5 2026", "All", car_parts=CarParts.common([CarHarness.hyundai_a])),
+    ],
+    # Kia service data: 2995 mm wheelbase and 16.4:1 steering ratio at +/-20 degrees.
+    CarSpecs(wheelbase=2.995, steerRatio=16.4, tireStiffnessFactor=0.65),
+    flags=HyundaiFlags.EV | HyundaiFlags.PLEOS_CONNECT |
+          HyundaiFlags.CANFD_ANGLE_STEERING | HyundaiFlags.SEND_LFA,
   )
 
 

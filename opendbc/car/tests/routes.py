@@ -222,7 +222,6 @@ routes = [
   CarTestRoute("d545129f3ca90f28/2022-10-19--09-22-54", HYUNDAI.KIA_EV6),  # LKA steering
   CarTestRoute("68d6a96e703c00c9/2022-09-10--16-09-39", HYUNDAI.KIA_EV6),  # LFA steering
   CarTestRoute("9b25e8c1484a1b67/2023-04-13--10-41-45", HYUNDAI.KIA_EV6),
-  CarTestRoute("a7714f9833ff067d/0000003a--2c68e9ff85", HYUNDAI.KIA_PV5, segment=0),
   CarTestRoute("007d5e4ad9f86d13/2021-09-30--15-09-23", HYUNDAI.KIA_K5_2021),
   CarTestRoute("c58dfc9fc16590e0/2023-01-14--13-51-48", HYUNDAI.KIA_K5_HEV_2020),
   CarTestRoute("74fbff45aa20fe9e/00000010--6f173d5799", HYUNDAI.KIA_K7_2017),
@@ -393,4 +392,5 @@ routes = [
   CarTestRoute("dc7bf18c8af12e37/00000006--ea06255cd0", HYUNDAI.KIA_CEED_PHEV_2022_NON_SCC),
   CarTestRoute("d59ca223dca8da93/0000017a--5e6e4107f1", HYUNDAI.HYUNDAI_SONATA_HEV_2024),
   CarTestRoute("8bae07514ce06ad4/00000008--9f43d90441", CHRYSLER.RAM_HD_5TH_GEN),  # 2024 Ram HD with alt cruise buttons
+  CarTestRoute("a7714f9833ff067d/0000003a--2c68e9ff85", HYUNDAI.KIA_PV5, segment=0),
 ]
