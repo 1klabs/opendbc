@@ -8,7 +8,40 @@ LANE_CHANGE_SPEED_MIN = 8.9408
 LANELINE_DEPARTURE = 4
 LKA_ICON_OFF, LKA_ICON_STANDBY, LKA_ICON_ACTIVE = 0, 3, 4
 LKA_ICON_ON = (LKA_ICON_STANDBY, LKA_ICON_ACTIVE)
-LANELINE_CURVATURE = {i: (31 if i == -1 else 13 - abs(i + 15)) if i < 0 else 15 + i for i in range(-15, 16)}
+LANELINE_SOLID, LANELINE_DASHED = 2, 8
+LANE_QUALITY_VALID = (2, 3)
+
+# LANELINE_CURVATURE steps (-15..15, negative is a right curve) from FR_CMR_03_50ms lane curvature,
+# upper |curvature| bound of steps 0..14 in 1/km, fit to the stock camera's display
+CURVATURE_STEP_BP = (0.173, 0.477, 0.731, 0.958, 1.194, 1.445, 1.683, 1.958, 2.198, 2.395, 2.62, 2.83, 3.0, 3.29, 3.75)
+CURVATURE_STEP_MAX = len(CURVATURE_STEP_BP)
+CURVATURE_HYSTERESIS = 0.08  # 1/km, matches the stock step change rate
+
+
+def lane_curvature(msg_1b5) -> float | None:
+  # 1/m, positive curves right. None without a valid lane line
+  valid = [msg_1b5[f"Info_{side}LnCvtrVal"] for side in ("Lft", "Rt") if msg_1b5[f"Info_{side}LnQualSta"] in LANE_QUALITY_VALID]
+  return sum(valid) / len(valid) if valid else None
+
+
+def curvature_step(curvature: float, last_step: int = 0) -> int:
+  magnitude = abs(curvature) * 1e3
+  step = sum(magnitude >= bp for bp in CURVATURE_STEP_BP)
+  step = -step if curvature > 0 else step
+
+  # hold the last step while the curvature stays within its band widened by the hysteresis
+  last = abs(last_step)
+  lower = CURVATURE_STEP_BP[last - 1] - CURVATURE_HYSTERESIS if last > 0 else 0.0
+  upper = CURVATURE_STEP_BP[last] + CURVATURE_HYSTERESIS if last < CURVATURE_STEP_MAX else float('inf')
+  same_direction = last_step == 0 or (last_step < 0) == (curvature > 0)
+  if step != last_step and same_direction and lower <= magnitude < upper:
+    return last_step
+  return step
+
+
+def curvature_to_can(step: int) -> int:
+  # signed 5 bit with an offset of 15, negative steps are stored as 15 + |step|
+  return (step if step >= 0 else 15 - step) + 15
 
 
 def lane_positions(msg_1b5):
@@ -44,8 +77,13 @@ def lane_positions(msg_1b5):
   return leftlane, rightlane
 
 
+def line_type(camera_laneline):
+  # the camera only reports dashed/solid while its own LFA is active, assume solid otherwise
+  return camera_laneline if camera_laneline in (LANELINE_SOLID, LANELINE_DASHED) else LANELINE_SOLID
+
+
 def create_pleos_connect_cluster(packer, CAN, openpilotLongitudinalControl, enabled, hud, leftBlinker, rightBlinker, msg_161, msg_162, msg_1b5,
-                       is_metric, out, main_cruise_enabled, lfa_icon, ldw_enabled):
+                       is_metric, out, main_cruise_enabled, lfa_icon, ldw_enabled, curvature_step=0):
   # Never modify the cached camera frames when constructing replacement HUD messages.
   msg_161 = msg_161.copy()
   msg_162 = msg_162.copy()
@@ -71,9 +109,11 @@ def create_pleos_connect_cluster(packer, CAN, openpilotLongitudinalControl, enab
     "LKA_ICON": (msg_161["LKA_ICON"] if msg_161["LKA_ICON"] in LKA_ICON_ON else LKA_ICON_STANDBY) if ldw_enabled else LKA_ICON_OFF,
     "LFA_ICON": 2 if lfa_icon else 0,
     "CENTERLINE": 1 if lfa_icon else 0,
-    "LANELINE_CURVATURE": LANELINE_CURVATURE.get(max(-15, min(int(out.steeringAngleDeg / 4.5), 15)), 14) if lfa_icon and not anyBlinker else 15,
-    "LANELINE_LEFT": (LANELINE_DEPARTURE if left_depart else 0 if not lfa_icon else 1 if not hud.leftLaneVisible else 6 if anyBlinker else 2),
-    "LANELINE_RIGHT": (LANELINE_DEPARTURE if right_depart else 0 if not lfa_icon else 1 if not hud.rightLaneVisible else 6 if anyBlinker else 2),
+    "LANELINE_CURVATURE": curvature_to_can(curvature_step if lfa_icon and not anyBlinker else 0),
+    "LANELINE_LEFT": (LANELINE_DEPARTURE if left_depart else 0 if not lfa_icon else 1 if not hud.leftLaneVisible else 6 if anyBlinker else
+                      line_type(msg_161["LANELINE_LEFT"])),
+    "LANELINE_RIGHT": (LANELINE_DEPARTURE if right_depart else 0 if not lfa_icon else 1 if not hud.rightLaneVisible else 6 if anyBlinker else
+                       line_type(msg_161["LANELINE_RIGHT"])),
     "LCA_LEFT_ICON": (0 if not lfa_icon or out.vEgo < LANE_CHANGE_SPEED_MIN else 1 if out.leftBlindspot else 2 if anyBlinker else 4),
     "LCA_RIGHT_ICON": (0 if not lfa_icon or out.vEgo < LANE_CHANGE_SPEED_MIN else 1 if out.rightBlindspot else 2 if anyBlinker else 4),
     "LCA_LEFT_ARROW": 2 if leftBlinker else 0,
@@ -135,6 +175,7 @@ class PleosConnectCarController:
     self.pleos_connect = bool(CP.flags & HyundaiFlags.PLEOS_CONNECT)
     self.ldw_enabled = bool(CP_SP.flags & HyundaiFlagsSP.LDW_ENABLED)
     self.last_counters: dict[int, int] = {}
+    self.curvature_step = 0
 
   def _new_frame(self, addr: int, msg) -> bool:
     # Forward once per source frame so the receiver sees the source's counter sequence
@@ -152,11 +193,14 @@ class PleosConnectCarController:
       can_sends.append(create_pleos_connect_mdps(self.packer, self.CAN, CS.mdps, CS.cam_lfa_alt))
 
     new_161, new_162 = self._new_frame(0x161, CS.msg_161), self._new_frame(0x162, CS.msg_162)
+    if new_161 and (curvature := lane_curvature(CS.msg_1b5)) is not None:
+      self.curvature_step = curvature_step(curvature, self.curvature_step)
+
     if new_161 or new_162:
       msg_161, msg_162 = create_pleos_connect_cluster(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled,
                                                       CC.hudControl, CC.leftBlinker, CC.rightBlinker, CS.msg_161, CS.msg_162,
                                                       CS.msg_1b5, CS.is_metric, CS.out, CS.main_cruise_enabled, self.lfa_icon,
-                                                      self.ldw_enabled)
+                                                      self.ldw_enabled, self.curvature_step)
       can_sends += [msg for msg, new in ((msg_161, new_161), (msg_162, new_162)) if new]
 
     return can_sends

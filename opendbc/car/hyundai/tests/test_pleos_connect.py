@@ -7,7 +7,8 @@ from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 from opendbc.car.vehicle_model import VehicleModel, calc_slip_factor
-from opendbc.sunnypilot.car.hyundai.pleos_connect import create_pleos_connect_cluster, create_pleos_connect_mdps, lane_positions
+from opendbc.sunnypilot.car.hyundai.pleos_connect import CURVATURE_STEP_BP, create_pleos_connect_cluster, create_pleos_connect_mdps, curvature_step, \
+  curvature_to_can, lane_curvature, lane_positions
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP, HyundaiSafetyFlagsSP
 from opendbc.sunnypilot.car.interfaces import setup_interfaces
 
@@ -166,3 +167,62 @@ class TestPleosConnectIntegration(unittest.TestCase):
         self.assertNotEqual(parser.vl["CCNC_0x161"]["LANELINE_LEFT"], 4)
         # camera vibration is never dropped, it also carries forward collision warnings
         self.assertEqual(parser.vl["CCNC_0x162"]["VIBRATE"], 1)
+
+  def test_curvature_can_encoding(self):
+    # stock camera encoding: raw = step for left curves, 15 + |step| for right curves
+    cp = CarInterface.get_params(CAR.KIA_PV5, gen_empty_fingerprint(), [], False, False, False)
+    can = CanBus(cp)
+    packer = CANPacker("hyundai_canfd_generated")
+    sig = packer.dbc.name_to_msg["CCNC_0x161"].sigs["LANELINE_CURVATURE"]
+    for step in range(-15, 16):
+      _, dat, _ = packer.make_can_msg("CCNC_0x161", can.ECAN, {"LANELINE_CURVATURE": curvature_to_can(step)})
+      self.assertEqual(sig.get_raw_value(dat), step if step >= 0 else 15 - step)
+
+  def test_curvature_step(self):
+    self.assertEqual(curvature_step(0.0), 0)
+    # each breakpoint starts the next step, positive curvature (right curve) gives negative steps.
+    # starting from straight, the step only moves once past the breakpoint plus hysteresis
+    for i, bp in enumerate(CURVATURE_STEP_BP):
+      self.assertEqual(curvature_step(-(bp + 0.09) * 1e-3), i + 1)
+      self.assertEqual(curvature_step((bp + 0.09) * 1e-3), -(i + 1))
+    self.assertEqual(curvature_step(-(CURVATURE_STEP_BP[0] + 0.05) * 1e-3), 0)
+    self.assertEqual(curvature_step(-1e-2), 15)
+    # hysteresis holds the last step near a breakpoint, but not across a direction change
+    bp = CURVATURE_STEP_BP[2] * 1e-3
+    self.assertEqual(curvature_step(-(bp - 0.05e-3), 3), 3)
+    self.assertEqual(curvature_step(-(bp - 0.2e-3), 3), 2)
+    self.assertEqual(curvature_step(0.1e-3, 1), 0)
+
+  def test_lane_curvature(self):
+    msg = {"Info_LftLnCvtrVal": 1e-3, "Info_RtLnCvtrVal": 2e-3, "Info_LftLnQualSta": 3, "Info_RtLnQualSta": 3}
+    self.assertAlmostEqual(lane_curvature(msg), 1.5e-3)
+    self.assertAlmostEqual(lane_curvature({**msg, "Info_RtLnQualSta": 1}), 1e-3)
+    self.assertIsNone(lane_curvature({**msg, "Info_LftLnQualSta": 0, "Info_RtLnQualSta": 1}))
+
+  def test_cluster_line_type_and_curvature(self):
+    cp = CarInterface.get_params(CAR.KIA_PV5, gen_empty_fingerprint(), [], False, False, False)
+    can = CanBus(cp)
+    packer = CANPacker("hyundai_canfd_generated")
+    parser = CANParser("hyundai_canfd_generated", [], can.ECAN)
+    parser.vl["CCNC_0x161"]
+    hud = structs.CarControl().hudControl
+    msg_1b5 = {"Info_LftLnPosVal": 0, "Info_RtLnPosVal": 0, "Info_LftLnQualSta": 0, "Info_RtLnQualSta": 0}
+    hud.leftLaneVisible = hud.rightLaneVisible = True  # always set by controlsd
+    sig = packer.dbc.name_to_msg["CCNC_0x161"].sigs["LANELINE_CURVATURE"]
+    cases = [
+      # lfa_icon, blinker, camera (left, right), curvature step -> expected (left, right), raw curvature
+      (True, False, (8, 2), -3, (8, 2), 18),  # camera dashed/solid kept, right curve
+      (True, False, (0, 0), 4, (2, 2), 4),    # no camera line type: solid
+      (True, True, (8, 8), 4, (6, 6), 0),     # blinker: lane change lines, straight
+      (False, False, (8, 2), 4, (0, 0), 0),   # not lateral active: hidden, straight
+    ]
+    for i, (lfa_icon, blinker, cam, step, expected, raw_curv) in enumerate(cases):
+      msg_161 = {"LKA_ICON": 3, "LANELINE_LEFT": cam[0], "LANELINE_RIGHT": cam[1], "ALERTS_2": 0, "ALERTS_3": 0, "ALERTS_5": 0,
+                 "SOUNDS_4": 0, "LFA_ICON": 0}
+      sends = create_pleos_connect_cluster(packer, can, False, lfa_icon, hud, blinker, False, msg_161, {}, msg_1b5,
+                                           True, structs.CarState(), False, lfa_icon, True, step)
+      addr, dat, bus = sends[0]
+      parser.update((i + 1, [(addr, dat, bus)]))
+      with self.subTest(case=i):
+        self.assertEqual((parser.vl["CCNC_0x161"]["LANELINE_LEFT"], parser.vl["CCNC_0x161"]["LANELINE_RIGHT"]), expected)
+        self.assertEqual(sig.get_raw_value(dat), raw_curv)
