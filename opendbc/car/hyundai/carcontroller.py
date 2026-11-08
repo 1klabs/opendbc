@@ -85,7 +85,7 @@ class CarController(CarControllerBase, CcncCarController, EsccCarController, Lea
     LeadDataCarController.__init__(self, CP)
     LongitudinalController.__init__(self, CP, CP_SP)
     IntelligentCruiseButtonManagementInterface.__init__(self, CP, CP_SP)
-    PleosConnectCarController.__init__(self, CP)
+    PleosConnectCarController.__init__(self, CP, CP_SP)
     self.CAN = CanBus(CP)
     self.params = CarControllerParams(CP)
     self.packer = CANPacker(dbc_names[Bus.pt])

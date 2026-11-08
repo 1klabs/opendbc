@@ -33,3 +33,4 @@ class HyundaiFlagsSP(IntFlag):
   SPEED_LIMIT_AVAILABLE = 2 ** 9  # platforms with speed limit data available
   HAS_LKAS12 = 2 ** 10
   CCNC = 2 ** 11
+  LDW_ENABLED = 2 ** 12  # openpilot lane departure warnings enabled, shown on the cluster

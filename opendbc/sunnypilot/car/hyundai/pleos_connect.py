@@ -2,8 +2,12 @@
 # Kept separate from sunnypilot's CCNC handling, which targets torque steering cars.
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai.values import HyundaiFlags
+from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 
 LANE_CHANGE_SPEED_MIN = 8.9408
+LANELINE_DEPARTURE = 4
+LKA_ICON_OFF, LKA_ICON_STANDBY, LKA_ICON_ACTIVE = 0, 3, 4
+LKA_ICON_ON = (LKA_ICON_STANDBY, LKA_ICON_ACTIVE)
 LANELINE_CURVATURE = {i: (31 if i == -1 else 13 - abs(i + 15)) if i < 0 else 15 + i for i in range(-15, 16)}
 
 
@@ -41,7 +45,7 @@ def lane_positions(msg_1b5):
 
 
 def create_pleos_connect_cluster(packer, CAN, openpilotLongitudinalControl, enabled, hud, leftBlinker, rightBlinker, msg_161, msg_162, msg_1b5,
-                       is_metric, out, main_cruise_enabled, lfa_icon):
+                       is_metric, out, main_cruise_enabled, lfa_icon, ldw_enabled):
   # Never modify the cached camera frames when constructing replacement HUD messages.
   msg_161 = msg_161.copy()
   msg_162 = msg_162.copy()
@@ -58,15 +62,18 @@ def create_pleos_connect_cluster(packer, CAN, openpilotLongitudinalControl, enab
     msg_161["SOUNDS_4"] = 0
 
   anyBlinker = leftBlinker or rightBlinker
+  # LDW follows openpilot's lane departure warning toggle: its icon and the camera's warnings like stock
+  left_depart = ldw_enabled and (hud.leftLaneDepart or msg_161["LANELINE_LEFT"] == LANELINE_DEPARTURE)
+  right_depart = ldw_enabled and (hud.rightLaneDepart or msg_161["LANELINE_RIGHT"] == LANELINE_DEPARTURE)
 
   msg_161.update({
     "DAW_ICON": 0,
-    "LKA_ICON": 0,
+    "LKA_ICON": (msg_161["LKA_ICON"] if msg_161["LKA_ICON"] in LKA_ICON_ON else LKA_ICON_STANDBY) if ldw_enabled else LKA_ICON_OFF,
     "LFA_ICON": 2 if lfa_icon else 0,
     "CENTERLINE": 1 if lfa_icon else 0,
     "LANELINE_CURVATURE": LANELINE_CURVATURE.get(max(-15, min(int(out.steeringAngleDeg / 4.5), 15)), 14) if lfa_icon and not anyBlinker else 15,
-    "LANELINE_LEFT": (0 if not lfa_icon else 1 if not hud.leftLaneVisible else 4 if hud.leftLaneDepart else 6 if anyBlinker else 2),
-    "LANELINE_RIGHT": (0 if not lfa_icon else 1 if not hud.rightLaneVisible else 4 if hud.rightLaneDepart else 6 if anyBlinker else 2),
+    "LANELINE_LEFT": (LANELINE_DEPARTURE if left_depart else 0 if not lfa_icon else 1 if not hud.leftLaneVisible else 6 if anyBlinker else 2),
+    "LANELINE_RIGHT": (LANELINE_DEPARTURE if right_depart else 0 if not lfa_icon else 1 if not hud.rightLaneVisible else 6 if anyBlinker else 2),
     "LCA_LEFT_ICON": (0 if not lfa_icon or out.vEgo < LANE_CHANGE_SPEED_MIN else 1 if out.leftBlindspot else 2 if anyBlinker else 4),
     "LCA_RIGHT_ICON": (0 if not lfa_icon or out.vEgo < LANE_CHANGE_SPEED_MIN else 1 if out.rightBlindspot else 2 if anyBlinker else 4),
     "LCA_LEFT_ARROW": 2 if leftBlinker else 0,
@@ -78,7 +85,7 @@ def create_pleos_connect_cluster(packer, CAN, openpilotLongitudinalControl, enab
     msg_161["LANELINE_LEFT_POSITION"] = leftlane
     msg_161["LANELINE_RIGHT_POSITION"] = rightlane
 
-  if hud.leftLaneDepart or hud.rightLaneDepart:
+  if ldw_enabled and (hud.leftLaneDepart or hud.rightLaneDepart):
     msg_162["VIBRATE"] = 1
 
   if openpilotLongitudinalControl:
@@ -124,8 +131,9 @@ def create_pleos_connect_mdps(packer, CAN, mdps, cam_lfa_alt):
 
 
 class PleosConnectCarController:
-  def __init__(self, CP):
+  def __init__(self, CP, CP_SP):
     self.pleos_connect = bool(CP.flags & HyundaiFlags.PLEOS_CONNECT)
+    self.ldw_enabled = bool(CP_SP.flags & HyundaiFlagsSP.LDW_ENABLED)
     self.last_counters: dict[int, int] = {}
 
   def _new_frame(self, addr: int, msg) -> bool:
@@ -147,7 +155,8 @@ class PleosConnectCarController:
     if new_161 or new_162:
       msg_161, msg_162 = create_pleos_connect_cluster(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled,
                                                       CC.hudControl, CC.leftBlinker, CC.rightBlinker, CS.msg_161, CS.msg_162,
-                                                      CS.msg_1b5, CS.is_metric, CS.out, CS.main_cruise_enabled, self.lfa_icon)
+                                                      CS.msg_1b5, CS.is_metric, CS.out, CS.main_cruise_enabled, self.lfa_icon,
+                                                      self.ldw_enabled)
       can_sends += [msg for msg, new in ((msg_161, new_161), (msg_162, new_162)) if new]
 
     return can_sends
