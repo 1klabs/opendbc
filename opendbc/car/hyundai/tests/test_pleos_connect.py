@@ -7,8 +7,8 @@ from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 from opendbc.car.vehicle_model import VehicleModel, calc_slip_factor
-from opendbc.sunnypilot.car.hyundai.pleos_connect import CURVATURE_STEP_BP, LANE_CHANGE_NEAR, LANE_CHANGE_REVEAL_FRAMES, LaneChangeDisplay, \
-  create_pleos_connect_cluster, create_pleos_connect_mdps, curvature_step, curvature_to_can, lane_curvature
+from opendbc.sunnypilot.car.hyundai.pleos_connect import CURVATURE_FADE_SPEED, CURVATURE_STEP_BP, LANE_CHANGE_NEAR, LANE_CHANGE_REVEAL_FRAMES, \
+  LaneChangeDisplay, create_pleos_connect_cluster, create_pleos_connect_mdps, curvature_step, curvature_to_can, displayed_curvature, lane_curvature
 
 
 def lane_msg(left, right, quality=3, lead=0.):
@@ -251,6 +251,15 @@ class TestPleosConnectIntegration(unittest.TestCase):
     self.assertEqual(curvature_step(-(bp - 0.2e-3), 3), 2)
     self.assertEqual(curvature_step(0.1e-3, 1), 0)
 
+  def test_displayed_curvature_fades_in_with_speed(self):
+    # straight at low speed like the stock camera, full curvature once past the fade
+    low, high = CURVATURE_FADE_SPEED
+    self.assertEqual(displayed_curvature(2e-3, 0.), 0.)
+    self.assertEqual(displayed_curvature(2e-3, low), 0.)
+    self.assertAlmostEqual(displayed_curvature(2e-3, (low + high) / 2), 1e-3)
+    self.assertAlmostEqual(displayed_curvature(-2e-3, high), -2e-3)
+    self.assertAlmostEqual(displayed_curvature(-2e-3, 30.), -2e-3)
+
   def test_lane_curvature(self):
     msg = {"Info_LftLnCvtrVal": 1e-3, "Info_RtLnCvtrVal": 2e-3, "Info_LftLnQualSta": 3, "Info_RtLnQualSta": 3}
     self.assertAlmostEqual(lane_curvature(msg), 1.5e-3)
@@ -288,6 +297,23 @@ class TestPleosConnectIntegration(unittest.TestCase):
         self.assertEqual(sig.get_raw_value(dat), raw_curv)
         if lc is not None and lfa_icon:
           self.assertEqual(parser.vl["CCNC_0x161"]["LANE_LEFT"], 1)
+
+  def test_cluster_drops_camera_hands_on_warning(self):
+    # the camera's LFA never steers, so its hands-on warning is never shown
+    cp = CarInterface.get_params(CAR.KIA_PV5, gen_empty_fingerprint(), [], False, False, False)
+    can = CanBus(cp)
+    packer = CANPacker("hyundai_canfd_generated")
+    parser = CANParser("hyundai_canfd_generated", [], can.ECAN)
+    parser.vl["CCNC_0x161"]
+    parser.vl["CCNC_0x162"]
+    msg_161 = {"LKA_ICON": 3, "LANELINE_LEFT": 0, "LANELINE_RIGHT": 0, "ALERTS_2": 1, "SOUNDS_2": 2, "ALERTS_3": 0, "ALERTS_5": 0,
+               "SOUNDS_4": 0, "LFA_ICON": 2}
+    sends = create_pleos_connect_cluster(packer, can, False, True, structs.CarControl().hudControl, False, False, msg_161, {"ZEROS_9": 80},
+                                         lane_msg(-1.7, 1.7), True, structs.CarState(), False, True, True)
+    parser.update((1, sends))
+    self.assertEqual(parser.vl["CCNC_0x161"]["ALERTS_2"], 0)
+    self.assertEqual(parser.vl["CCNC_0x161"]["SOUNDS_2"], 0)
+    self.assertEqual(parser.vl["CCNC_0x162"]["ZEROS_9"], 0)
 
   def test_cluster_chevrons_and_lane_fill_length(self):
     cp = CarInterface.get_params(CAR.KIA_PV5, gen_empty_fingerprint(), [], False, False, False)

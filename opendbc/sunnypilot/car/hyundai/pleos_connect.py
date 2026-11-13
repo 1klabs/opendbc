@@ -1,6 +1,9 @@
 # Kia Pleos Connect (PV5): the camera's HUD, MDPS and LFA_ALT frames are replaced by openpilot.
 # Kept separate from sunnypilot's CCNC handling, which targets torque steering cars.
+import numpy as np
+
 from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.hyundai.values import HyundaiFlags
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 
@@ -25,6 +28,11 @@ LANE_CHANGE_RELABEL_JUMP = 10  # the camera relabels its lines after the car cro
 CURVATURE_STEP_BP = (0.173, 0.477, 0.731, 0.958, 1.194, 1.445, 1.683, 1.958, 2.198, 2.395, 2.62, 2.83, 3.0, 3.29, 3.75)
 CURVATURE_STEP_MAX = len(CURVATURE_STEP_BP)
 CURVATURE_HYSTERESIS = 0.08  # 1/km, matches the stock step change rate
+# the stock camera shows a straight road below ~16 km/h and fades curvature in up to ~30 km/h, where the
+# camera's lane curvature is noisy. The fade and a 0.5 s low-pass match its low speed display and step rate
+CURVATURE_FADE_SPEED = (20 * CV.KPH_TO_MS, 35 * CV.KPH_TO_MS)
+CURVATURE_FILTER_RC = 0.5  # s
+HUD_DT = 0.05  # 0x161 frame period
 
 
 def lane_curvature(msg_1b5) -> float | None:
@@ -46,6 +54,10 @@ def curvature_step(curvature: float, last_step: int = 0) -> int:
   if step != last_step and same_direction and lower <= magnitude < upper:
     return last_step
   return step
+
+
+def displayed_curvature(curvature: float, v_ego: float) -> float:
+  return curvature * float(np.interp(v_ego, CURVATURE_FADE_SPEED, (0., 1.)))
 
 
 def curvature_to_can(step: int) -> int:
@@ -149,8 +161,11 @@ def create_pleos_connect_cluster(packer, CAN, openpilotLongitudinalControl, enab
 
   for f in {"FAULT_LSS", "FAULT_HDA", "FAULT_DAS", "FAULT_LFA", "FAULT_DAW", "FAULT_ESS"}:
     msg_162[f] = 0
-  if msg_161["ALERTS_2"] == 5:
+  # the camera's own LFA never steers on the PV5, so its hands-on warnings (1, 2) and LFA deactivated (3) are spurious.
+  # its hands-on warning also sets 0x162 ZEROS_9 = 80
+  if msg_161["ALERTS_2"] in (1, 2, 3, 5):
     msg_161.update({"ALERTS_2": 0, "SOUNDS_2": 0})
+  msg_162["ZEROS_9"] = 0
   if msg_161["ALERTS_3"] == 17:
     msg_161["ALERTS_3"] = 0
   if msg_161["ALERTS_5"] in (2, 5):
@@ -238,6 +253,7 @@ class PleosConnectCarController:
     self.ldw_enabled = bool(CP_SP.flags & HyundaiFlagsSP.LDW_ENABLED)
     self.last_counters: dict[int, int] = {}
     self.curvature_step = 0
+    self.curvature_filter = FirstOrderFilter(0., CURVATURE_FILTER_RC, HUD_DT, initialized=False)
     self.lane_change_display = LaneChangeDisplay()
     self.lane_change = None
 
@@ -259,6 +275,7 @@ class PleosConnectCarController:
     new_161, new_162 = self._new_frame(0x161, CS.msg_161), self._new_frame(0x162, CS.msg_162)
     if new_161:
       if (curvature := lane_curvature(CS.msg_1b5)) is not None:
+        curvature = displayed_curvature(self.curvature_filter.update(curvature), CS.out.vEgo)
         self.curvature_step = curvature_step(curvature, self.curvature_step)
       # controlsd only sets the blinkers during an openpilot lane change, not while a vehicle blocks the target lane
       direction = None
