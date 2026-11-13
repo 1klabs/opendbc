@@ -266,6 +266,9 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     ret.steerFaultTemporary = cp.vl["MDPS"]["MDPS_LkaFailSta"] != 0
 
     if self.CP.flags & HyundaiFlags.PLEOS_CONNECT:
+      # the MDPS can refuse angle requests without setting MDPS_LkaFailSta, openpilot would show steering while it is not
+      ret.steerFaultTemporary |= cp.vl["MDPS"]["MDPS_ADAS_AciFltSig_Lv2"] != 0
+
       # camera frames we replace, kept to pass through stock state
       self.msg_161, self.msg_162, self.msg_1b5 = map(copy.copy, (cp_cam.vl["CCNC_0x161"], cp_cam.vl["CCNC_0x162"], cp_cam.vl["FR_CMR_03_50ms"]))
       self.cruise_info = copy.copy((cp_cam if self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else cp).vl["SCC_CONTROL"])
