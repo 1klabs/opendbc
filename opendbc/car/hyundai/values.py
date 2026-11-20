@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, IntFlag
 
 from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
@@ -65,6 +65,11 @@ class CarControllerParams:
 
     if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
       self.STEER_THRESHOLD = 175
+
+    if CP.flags & HyundaiFlags.PLEOS_CONNECT:
+      # On other HKG angle cars the ADAS ECU clamps the command to the stock LKAS max of 176.7 deg before the MDPS.
+      # Here it goes to the MDPS directly, which latches an angle control fault above ~185 deg.
+      self.ANGLE_LIMITS = replace(CarControllerParams.ANGLE_LIMITS, STEER_ANGLE_MAX=176.7)
 
 
 class HyundaiSafetyFlags(IntFlag):
