@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, IntFlag
 
 from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
@@ -65,6 +65,10 @@ class CarControllerParams:
 
     if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
       self.STEER_THRESHOLD = 175
+
+    if CP.flags & HyundaiFlags.PLEOS_CONNECT:
+      # the MDPS latches an angle control fault once the request passes ~200 deg, until the request is dropped
+      self.ANGLE_LIMITS = replace(CarControllerParams.ANGLE_LIMITS, STEER_ANGLE_MAX=190)
 
 
 class HyundaiSafetyFlags(IntFlag):
